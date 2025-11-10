@@ -1,39 +1,57 @@
-# Project Proposal: Data-Driven Option Pricing
-**Category:**: Quantitative Finance / Machine Learning
+# Project Proposal: Comparing Numerical and Analytical Methods for Option Pricing: Monte Carlo, Neural Networks, and Black–Scholes
 
 ---
 
 ## Problem Statement & Motivation
-This project explores how machine learning can be used to price European options and compares its performance with classical analytical and numerical approaches (Black–Scholes and Monte Carlo).
 
-Traditional pricing methods rely on theoretical assumptions such as constant volatility, lognormal returns, and frictionless markets. While the Black–Scholes model provides a closed-form solution under these assumptions, it struggles with real-world complexities. Monte Carlo simulations can model more general dynamics but are computationally expensive.
+Options are financial contracts that give you the right (not the obligation) to buy or sell an underlying asset at a fixed strike price on (European) or up to (American) a specified maturity. Their price depends on several parameters such as underlying price, strike, time to maturity, interest rates, and volatility. Black, Scholes and Merton derived in 1973 a closed-form (theoretical) price for European options under idealized assumptions that are not always met in real markets. BSM assumes for example frictionless markets and no arbitrage, plus the underlying follows geometric Brownian motion with constant volatility and applies only to European options.
 
-With the growth of computational power and data availability, machine learning (ML) provides a promising alternative, capable of learning complex/nonlinear patterns directly from data. The goal is to evaluate whether ML models can achieve comparable or superior accuracy and speed compared to classical methods under realistic market conditions.
-
-The underlying assets will include highly liquid instruments such as the S&P 500 index (SPX) and large-cap stocks like Apple (AAPL) etc.., which provide reliable option data for both simulation and empirical testing.
+Since then, many papers have extended or relaxed these assumptions introducing, for example, stochastic volatility (Steven Heston, 1993) or jump-diffusion models (Robert C. Merton 1976) and numerical methods have also been developed to price options when no closed-form solution exists or when we do not wish to rely on all of the BSM assumptions, often leading to a better fit to observed market prices.
 
 ---
 
 ## Planned Approach & Technology
-A dataset of option prices will be created using either simulated or real market data. Each sample will include features such as underlying price, strike, time to maturity, interest rate, and volatility.
 
-Several machine learning models such as linear regression, tree-based algorithms (Random Forest, XGBoost), and neural networks—will be trained to approximate the option-pricing function and compared against Black–Scholes theoretical prices and Monte Carlo estimates.
 
-Performance will be assessed by accuracy (MAE, RMSE) and computational efficiency (inference time), targeting ~99% accuracy and a ≥100× speedup for example (arbitrary values for the moment). Implementation will use Python (NumPy, pandas, scikit-learn, PyTorch).
+This project aims to compute options prices via 1) Black-Scholes, 2) Monte Carlo simulation, 3) train a neural network, and to compare predicted prices to market mid quotes. Then evaluate pricing accuracy using MAE/RMSE in dollars, as well as computational cost (total runtime).
 
+Note on data requirements: NNs are data-intensive and require substantial historical quotes for reliable training => they are less suitable for thinly traded or newly listed derivatives.
+
+This is why this project will focus on high-liquidity European options on the S&P 500 index (SPX). The data we will need will be:
+    - S: Underlying price
+    - K: Strike price
+    - T: Time to expiration
+    - r: Risk-free rate
+    - σ: volatility of the underlying
+    - Option type: call or put
+
+S, K, T, option type and market bid/ask quotes are available from Yahoo Finance via the "yfinance" Python open-source library with mid quotes as empirical option prices. The remaining parameters, r and σ, will be estimated: r from external risk-free rate data (e.g. Treasury yields) and σ following Hutchinson, Lo, and Poggio (1994).
+   
+   
 ---
 
 ## Expected Challenges & Mitigation
-- **Dataset creation and quality:** Real option data often contain noise, missing values, and occasional arbitrage violations. Rigorous preprocessing (e.g., spread filters, stale-quote removal, no-arbitrage checks) will be applied; if needed, a clean synthetic dataset with simulated parameters will be generated to ensure reliable training data.
-- **Model overfitting:** Overfitting occurs when a model performs well on training data but poorly on unseen data which happens often when training a model. To face this we could , cross-validation, regularization (L2/dropout), and early stopping will be used to improve generalization.
-- **Numerical scaling issues:** Inputs and targets will be normalized (e.g., price/strike), and well-conditioned features (e.g., log-moneyness, time to maturity) will be used to stabilize training.
+
+- **Dataset quality (preprocessing ):** Real option data can contain noise, missing values, and occasional arbitrage violations. Rigorous preprocessing will need to be applied.
+ 
+- **Model overfitting:** Overfitting occurs when a model performs well on training data but poorly on unseen data which happens often when training a model. To face this, techniques such as cross-validation, regularization or early stopping can help to improve generalization.
 
 ---
 
 ## Success Criteria
-1. **Accuracy:** R² ≥ 0.99 and RMSE ≤ 1% of the option price on the out-of-sample test set.
-2. **Speed:** ≥100× faster per-price inference than a Monte Carlo baseline (e.g. 100k paths).
-3. **Reproducibility & Reporting:** Results reproducible end-to-end, with pricing surfaces, error heatmaps, and performance tables.
+
+The project will be considered successful if the following criteria are met:
+
+
+1. **Predictive accuracy relative to market quotes:**
+   - Black–Scholes serves as a baseline, with MAE and RMSE in dollars (for call and put prices) reported on an out-of-sample test set.
+   - Monte Carlo and the neural network achieve comparable or lower MAE/RMSE than Black–Scholes on market mid quotes.
+
+
+2. **Computational performance:**
+   - Total runtime and average runtime per option are reported for each method.
+   - There is a clear discussion of the trade-off between accuracy and computational cost (Black–Scholes vs. Monte Carlo vs. neural network inference).
+
 
 ---
 
