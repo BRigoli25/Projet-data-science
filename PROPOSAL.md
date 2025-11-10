@@ -47,6 +47,14 @@ The project will be considered successful if the following criteria are met:
    - Black–Scholes serves as a baseline, with MAE and RMSE in dollars (for call and put prices) reported on an out-of-sample test set.
    - Monte Carlo and the neural network achieve comparable or lower MAE/RMSE than Black–Scholes on market mid quotes.
 
+$$
+\text{MAE} = \frac{1}{N} \sum_{i=1}^{N} \left| P^{\text{model}}_i - P^{\text{mkt}}_i \right|
+$$
+
+$$
+\text{RMSE} = \sqrt{ \frac{1}{N} \sum_{i=1}^{N} \left( P^{\text{model}}_i - P^{\text{mkt}}_i \right)^2 }
+$$
+
 
 2. **Computational performance:**
    - Total runtime and average runtime per option are reported for each method.
