@@ -1,0 +1,63 @@
+name: pot-project-env
+channels:
+  - conda-forge
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - pandas>=1.5.0
+  - numpy>=1.23.0
+  - scipy>=1.9.0
+  - matplotlib>=3.6.0
+  - seaborn>=0.12.0
+  - scikit-learn>=1.1.0
+  - pytorch>=2.0.0
+  - torchvision
+  - pip:
+    - pandas-datareader>=0.10.0
+    - openpyxl
+```
+
+---
+
+## **STEP 8: Create .gitignore**
+
+**File: `.gitignore`**
+```
+# Data files (too large for git)
+data/raw/*.csv
+results/*.csv
+*.csv
+
+# Model files
+models/*.pth
+*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.log
+*.tmp

@@ -1,0 +1,18 @@
+# Data files (too large for git)
+data/raw/*.csv
+results/*.csv
+*.csv
+
+# Model files
+models/*.pth
+*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+.Python
+env/
+venv/
+
+# OS
+.DS_Store
