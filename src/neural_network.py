@@ -1,26 +1,25 @@
+"""
+Main training function
+Called by main.py
+Neural Network Models for SPX Option Pricing
+Compares basic features vs full features (with IV and Greeks)
+"""
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.config import *
+import pandas as pd
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
+from sklearn.preprocessing import StandardScaler
+
+
 def run_training():
-    """
-    Main training function
-    Called by main.py
-    """    
-    """
-    Neural Network Models for SPX Option Pricing
-    Compares basic features vs full features (with IV and Greeks)
-    """
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    from src.config import *
-    import pandas as pd
-    import numpy as np
-    import torch
-    import torch.nn as nn
-    import torch.optim as optim
-    from torch.utils.data import TensorDataset, DataLoader
-    from sklearn.preprocessing import StandardScaler
-
-
+    """Main training function called by main.py"""
 
     # ============================================================
     # LOAD DATA
@@ -397,9 +396,10 @@ def run_training():
                     print(f"\n⚠️  Early stopping triggered at epoch {epoch+1}")
                     break
         
-        # Load best model
-        mlp_model.load_state_dict(best_model_state)
-        
+        # Load best model from saved file
+        model_path = os.path.join(MODELS_DIR, f'best_{model_name}.pth')
+        mlp_model.load_state_dict(torch.load(model_path))
+                
         print(f"\n✅ Training completed")
         print(f"Best validation loss: {best_val_loss:.6f}")
         print(f"Total epochs: {len(train_losses)}")

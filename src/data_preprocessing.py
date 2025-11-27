@@ -1,21 +1,20 @@
+"""
+SPX OPTIONS DATA PREPROCESSING AND BLACK-SCHOLES BASELINE
+Adapted for modular project structure
+"""
+import sys
+import os
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.config import *
+import pandas as pd
+import numpy as np
+from scipy.stats import norm
+from pandas_datareader import data as pdr
+
 def run_preprocessing():
-    """
-    Main preprocessing function
-    Called by main.py
-    SPX OPTIONS DATA PREPROCESSING AND BLACK-SCHOLES BASELINE
-    Adapted for modular project structure
-    """
-    import sys
-    import os
-    # Add parent directory to path for imports
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    from src.config import *
-    import pandas as pd
-    import numpy as np
-    from scipy.stats import norm
-    from pandas_datareader import data as pdr
-
+    """Main preprocessing function called by main.py"""
 
     # ==============================================================================
     # STEP 1: DATA LOADING AND INSPECTION
@@ -26,6 +25,8 @@ def run_preprocessing():
     print("="*60)
 
     # Load sample for quick inspection (first 1000 rows)
+    df_forward_sample = pd.read_csv(SPX_FORWARD_FILE, nrows=1000)
+    df_options_sample = pd.read_csv(SPX_OPTIONS_FILE, nrows=1000)
     df_forward_sample.to_csv(os.path.join(RESULTS_DIR, 'SPX_Forward_Prices_sample_1000rows.csv'))
     df_options_sample.to_csv(os.path.join(RESULTS_DIR, 'SPX_Options_sample_1000rows.csv'))
 
