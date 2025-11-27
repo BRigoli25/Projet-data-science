@@ -204,6 +204,13 @@ def run_preprocessing():
             if len(prior_dates) > 0:
                 return prior_dates.iloc[-1]['rate']
             return TREASURY_CONFIG['fallback_rate']
+    # Apply risk-free rates to each option
+    df['r'] = df['date'].apply(get_treasury_rate)
+
+    print("\n✅ Risk-free rates applied to data")
+    print(f"Risk-free rate statistics:")
+    print(df['r'].describe())
+    
         
         
     # ==============================================================================
