@@ -49,7 +49,7 @@ def run_training():
     df['T'] = df['days_to_maturity'] / 365.25
 
     # Core option features
-    df['moneyness'] = df['strike_price'] / 1000 / df['forward_price']  # S/K
+    df['moneyness'] = df['strike_price'] / df['forward_price']  # S/K
     df['log_moneyness'] = np.log(df['moneyness'])
     df['mid_price'] = (df['best_bid'] + df['best_offer']) / 2
     df['is_call'] = (df['cp_flag'] == 'C').astype(float)
@@ -129,9 +129,10 @@ def run_training():
         (df['gamma'].notna()) &
         (df['vega'].notna()) &
         (df['theta'].notna()) &
+        (df['mid_price'] > 0) &
         
         # European options only
-        (df['exercise_style'] == 'E')
+        (df['exercise_style'] == 'E') # should already be the case
     ].copy()
 
     print(f"\nOriginal: {len(df):,} options")
