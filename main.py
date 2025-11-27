@@ -57,7 +57,7 @@ Examples:
     
     # Print header
     print("="*70)
-    print(" SPX OPTION PRICING - MASTER'S THESIS")
+    print(" SPX OPTION PRICING ")
     print(" Neural Networks vs Traditional Models")
     print("="*70)
     print(f"\nProject directory: {PROJECT_ROOT}")
