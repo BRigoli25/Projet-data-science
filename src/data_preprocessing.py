@@ -2,8 +2,6 @@ def run_preprocessing():
     """
     Main preprocessing function
     Called by main.py
-    """   
-    """
     SPX OPTIONS DATA PREPROCESSING AND BLACK-SCHOLES BASELINE
     Adapted for modular project structure
     """
