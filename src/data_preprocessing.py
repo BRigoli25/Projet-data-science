@@ -118,8 +118,8 @@ def run_preprocessing():
     # Filter for quality (flexible to have more or less)
     print("\nFiltering for quality data...")
     df = df[
-        (df['moneyness'] >= 0.80) &
-        (df['moneyness'] <= 1.20) &
+        (df['moneyness'] >= 0.95) &
+        (df['moneyness'] <= 1.05) &
         (df['volume'] >= 10) &
         (df['open_interest'] >= 100) &
         (df['impl_volatility'] >= 0.05) &

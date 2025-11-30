@@ -106,6 +106,8 @@ FEATURES_BASIC = [
     'log_volume',
     'log_open_interest',
     'bid_ask_spread',
+    'historical_vol',
+    'historical_vol_sqrt_T'
 ]
 
 # Full features (includes implied vol and Greeks)
