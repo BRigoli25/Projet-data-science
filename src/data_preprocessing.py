@@ -118,8 +118,8 @@ def run_preprocessing():
     # Filter for quality (flexible to have more or less)
     print("\nFiltering for quality data...")
     df = df[
-        (df['moneyness'] >= 0.95) &
-        (df['moneyness'] <= 1.05) &
+        (df['moneyness'] >= 0.8) &
+        (df['moneyness'] <= 1.2) &
         (df['volume'] >= 10) &
         (df['open_interest'] >= 100) &
         (df['impl_volatility'] >= 0.05) &
@@ -400,6 +400,116 @@ def run_preprocessing():
         print(f"    {opt}: MAE=${subset['abs_error_hist'].mean():.2f}, n={len(subset):,}")
 
     # ==============================================================================
+    # STEP 8.5: WALK_FORWARD VALIDATION SPLITS
+    # ==============================================================================
+
+    print("\n" + "="*60)
+    print("STEP 8.5: CREATING TEMPORAL DATA SPLITS")
+    print("="*60)
+
+    # Sort by date for temporal split
+    df_hist = df_hist.sort_values('date').reset_index(drop=True)
+
+    print(f"Total options (with historical vol): {len(df_hist):,}")
+    print(f"Date range: {df_hist['date'].min().date()} to {df_hist['date'].max().date()}")
+
+    # define 5 fold configurations, one for each year
+    fold_configs = [
+    {'name': 'Fold 1', 'train_end': '2020-12-31', 'test_end': '2021-12-31'},
+    {'name': 'Fold 2', 'train_end': '2021-12-31', 'test_end': '2022-12-31'},
+    {'name': 'Fold 3', 'train_end': '2022-12-31', 'test_end': '2023-12-31'},
+    {'name': 'Fold 4', 'train_end': '2023-12-31', 'test_end': '2024-12-31'},
+    {'name': 'Fold 5', 'train_end': '2024-12-31', 'test_end': '2025-08-29'},
+    ]
+
+    # Calculate BS performance for each fold
+    fold_results = []
+
+    for fold in fold_configs:
+        fold_name = fold['name']
+        train_mask = df_hist['date'] <= fold['train_end']
+        test_mask = (df_hist['date'] > fold['train_end']) & (df_hist['date'] <= fold['test_end'])
+        
+        df_test_fold = df_hist[test_mask].copy()
+        
+        if len(df_test_fold) == 0:
+            print(f"\n⚠️  {fold_name}: No test data, skipping")
+            continue
+        
+        # Calculate metrics
+        mae = df_test_fold['abs_error_hist'].mean()
+        rmse = np.sqrt((df_test_fold['bs_error_hist']**2).mean())
+        bias = df_test_fold['bs_error_hist'].mean()
+        
+        # ATM subset
+        atm_mask = (df_test_fold['moneyness'] >= 0.95) & (df_test_fold['moneyness'] <= 1.05)
+        df_test_atm = df_test_fold[atm_mask]
+        mae_atm = df_test_atm['abs_error_hist'].mean() if len(df_test_atm) > 0 else np.nan
+        
+        fold_results.append({
+            'fold': fold_name,
+            'train_end': fold['train_end'],
+            'test_end': fold['test_end'],
+            'n_test': len(df_test_fold),
+            'n_atm': len(df_test_atm),
+            'mae': mae,
+            'mae_atm': mae_atm,
+            'rmse': rmse,
+            'bias': bias,
+        })
+        
+        print(f"\n{fold_name}:")
+        print(f"  Train: 2018-03-29 to {fold['train_end']}")
+        print(f"  Test:  {pd.to_datetime(fold['train_end']) + pd.Timedelta(days=1)} to {fold['test_end']}")
+        print(f"  Test size: {len(df_test_fold):,} options")
+        print(f"  BS(HV) MAE: ${mae:.2f}")
+        print(f"  BS(HV) MAE (ATM): ${mae_atm:.2f}")
+
+    # Calculate average performance
+    avg_mae = np.mean([r['mae'] for r in fold_results])
+    avg_mae_atm = np.mean([r['mae_atm'] for r in fold_results if not np.isnan(r['mae_atm'])])
+
+    print("\n" + "="*60)
+    print("WALK-FORWARD AVERAGE PERFORMANCE")
+    print("="*60)
+    print(f"Number of folds: {len(fold_results)}")
+    print(f"Average BS(HV) MAE: ${avg_mae:.2f}")
+    print(f"Average BS(HV) MAE (ATM only): ${avg_mae_atm:.2f}")
+
+    print("\nFold-by-Fold Summary:")
+    print(f"{'Fold':<10} {'Test Year':<12} {'MAE':<10} {'MAE (ATM)':<12}")
+    print("-" * 44)
+    for r in fold_results:
+        test_year = r['test_end'][:4]
+        print(f"{r['fold']:<10} {test_year:<12} ${r['mae']:<9.2f} ${r['mae_atm']:<11.2f}")
+
+    # Save fold info for NN to use
+    fold_info = {
+        'fold_configs': fold_configs,
+        'fold_results': fold_results,
+        'avg_mae': avg_mae,
+        'avg_mae_atm': avg_mae_atm,
+    }
+
+    # Keep single split for backward compatibility (use last fold)
+    train_mask = df_hist['date'] <= '2024-12-31'
+    val_mask = (df_hist['date'] > '2023-12-31') & (df_hist['date'] <= '2024-12-31')
+    test_mask = df_hist['date'] > '2024-12-31'
+
+   
+    print("\n" + "="*60)
+    print("✅ DATA PREPROCESSING COMPLETE!")
+    print("="*60)
+    print(f"\nSummary:")
+    print(f"  - Total options processed: {len(df_hist):,}")
+    print(f"  - Date range: {df_hist['date'].min().date()} to {df_hist['date'].max().date()}")
+    print(f"\nWalk-Forward Validation (5 folds):")
+    print(f"  - Average BS(HV) MAE: ${avg_mae:.2f}")
+    print(f"  - Average BS(HV) MAE (ATM): ${avg_mae_atm:.2f}")
+    print(f"\nBaseline to beat: ${avg_mae:.2f} MAE")
+
+
+    # ==============================================================================
     # STEP 9: SAVE FINAL DATASETS
     # ==============================================================================
 
@@ -422,12 +532,15 @@ def run_preprocessing():
     print("✅ DATA PREPROCESSING COMPLETE!")
     print("="*60)
     print(f"\nSummary:")
-    print(f"  - Total options processed: {len(df):,}")
-    print(f"  - Date range: {df['date'].min().date()} to {df['date'].max().date()}")
-    print(f"  - BS(IV) MAE: ${df['abs_error'].mean():.2f}")
-    print(f"  - BS(HV) MAE: ${df_hist['abs_error_hist'].mean():.2f}")
+    print(f"  - Total options processed: {len(df_hist):,}")
+    print(f"  - Date range: {df_hist['date'].min().date()} to {df_hist['date'].max().date()}")
+    print(f"\nWalk-Forward Validation (5 folds):")
+    print(f"  - Number of folds: {len(fold_results)}")
+    print(f"  - Average BS(HV) MAE: ${avg_mae:.2f}")
+    print(f"  - Average BS(HV) MAE (ATM): ${avg_mae_atm:.2f}")
+    print(f"\nBaseline to beat: ${avg_mae:.2f} MAE")
     print(f"\nReady for neural network training!")
-    print(f"Target: Beat BS(HV) = ${df_hist['abs_error_hist'].mean():.2f} MAE")
+
 
 if __name__ == "__main__":
     run_preprocessing()
