@@ -1,3 +1,4 @@
+cat > .gitignore << 'EOF'
 # Data files (too large for git)
 data/raw/*.csv
 results/*.csv

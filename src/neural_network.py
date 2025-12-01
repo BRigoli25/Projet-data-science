@@ -20,6 +20,20 @@ from sklearn.preprocessing import StandardScaler
 
 def run_training():
     """Main training function called by main.py"""
+    
+    # ==============================================================================
+    # WALK-FORWARD VALIDATION SETUP (5 FOLDS)
+    # ==============================================================================
+    
+    fold_configs = [
+        {'name': 'Fold 1', 'train_end': '2020-12-31', 'val_start': '2020-01-01', 'val_end': '2020-12-31', 'test_end': '2021-12-31'},
+        {'name': 'Fold 2', 'train_end': '2021-12-31', 'val_start': '2021-01-01', 'val_end': '2021-12-31', 'test_end': '2022-12-31'},
+        {'name': 'Fold 3', 'train_end': '2022-12-31', 'val_start': '2022-01-01', 'val_end': '2022-12-31', 'test_end': '2023-12-31'},
+        {'name': 'Fold 4', 'train_end': '2023-12-31', 'val_start': '2023-01-01', 'val_end': '2023-12-31', 'test_end': '2024-12-31'},
+        {'name': 'Fold 5', 'train_end': '2024-12-31', 'val_start': '2024-01-01', 'val_end': '2024-12-31', 'test_end': '2025-08-29'},
+    ]
+    
+    WALK_FORWARD = True  # Set to False to disable
 
     # ============================================================
     # LOAD DATA
@@ -29,7 +43,7 @@ def run_training():
     print("Using WRDS OptionMetrics Data")
     print("="*60)
 
-    df = pd.read_csv(SPX_MERGED_FILE)
+    df = pd.read_csv(SPX_BS_HIST_FILE)
     print(f"\nLoaded: {len(df):,} options")
     print(f"Columns available: {len(df.columns)}")
 
@@ -75,7 +89,7 @@ def run_training():
     df['impl_vol'] = df['impl_volatility']
     df['impl_vol_sqrt_T'] = df['impl_volatility'] * df['sqrt_T']
     df['impl_vol_squared'] = df['impl_volatility'] ** 2
-    df['hist_vol_sqrt_T'] = df['historical_vol'] * df['sqrt_T']
+    df['historical_vol_sqrt_T'] = df['historical_vol'] * df['sqrt_T']
 
     # Greeks (HUGE ADVANTAGE - these capture market expectations)
     df['abs_delta'] = df['delta'].abs()
@@ -242,7 +256,7 @@ def run_training():
     # TRAINING FUNCTION
     # ============================================================
 
-    def train_model(feature_columns, model_name, num_epochs=300, batch_size=2048, 
+    def train_model(feature_columns, model_name, df_train, df_val, df_test, num_epochs=300, batch_size=2048, 
                     learning_rate=0.001, patience=30):
         """
         Train a neural network model for option pricing
@@ -273,15 +287,15 @@ def run_training():
         print(f"Features: {len(feature_columns)}")
         
         # Prepare data
-        X_train = df_clean[train_mask][feature_columns].values
-        y_train = df_clean[train_mask]['mid_price'].values
-        
-        X_val = df_clean[val_mask][feature_columns].values
-        y_val = df_clean[val_mask]['mid_price'].values
-        
-        X_test = df_clean[test_mask][feature_columns].values
-        y_test = df_clean[test_mask]['mid_price'].values
-        
+        X_train = df_train[feature_columns].values
+        y_train = df_train['mid_price'].values
+
+        X_val = df_val[feature_columns].values
+        y_val = df_val['mid_price'].values
+
+        X_test = df_test[feature_columns].values
+        y_test = df_test['mid_price'].values
+            
         # Check and clean data
         def check_and_clean(X):
             if np.isnan(X).sum() > 0 or np.isinf(X).sum() > 0:
@@ -521,21 +535,119 @@ def run_training():
         }
 
     # ============================================================
-    # TRAIN BOTH MODELS
+    # TRAIN MODELS WITH WALK-FORWARD VALIDATION
     # ============================================================
 
     print("\n" + "="*80)
-    print("TRAINING BOTH MODEL VARIANTS")
+    print("WALK-FORWARD TRAINING (5 FOLDS)")
     print("="*80)
 
-    # Train Model 1: Basic features
-    trained_basic = train_model(features_basic, "NN_Basic")
-    results_basic = evaluate_model(trained_basic)
+    if WALK_FORWARD:
+        print("\n" + "="*80)
+        print("WALK-FORWARD TRAINING (5 FOLDS)")
+        print("="*80)
+        
+        all_fold_results_basic = []
+        all_fold_results_full = []
+        
+        for fold_idx, fold_config in enumerate(fold_configs):
+            print(f"\n{'='*80}")
+            print(f"FOLD {fold_idx+1}/5: {fold_config['name']}")
+            print(f"{'='*80}")
+            
+            # Create date-based masks for this fold
+            train_mask_fold = df_clean['date'] <= fold_config['train_end']
+            val_mask_fold = (df_clean['date'] >= fold_config['val_start']) & (df_clean['date'] <= fold_config['val_end'])
+            test_mask_fold = (df_clean['date'] > fold_config['train_end']) & (df_clean['date'] <= fold_config['test_end'])
+            
+            df_train_fold = df_clean[train_mask_fold].copy()
+            df_val_fold = df_clean[val_mask_fold].copy()
+            df_test_fold = df_clean[test_mask_fold].copy()
+            
+            print(f"\nTrain: {len(df_train_fold):,} options (up to {fold_config['train_end']})")
+            print(f"Val:   {len(df_val_fold):,} options ({fold_config['val_start']} to {fold_config['val_end']})")
+            print(f"Test:  {len(df_test_fold):,} options (up to {fold_config['test_end']})")
+            
+            if len(df_test_fold) < 100:
+                print(f"⚠️  Insufficient test data, skipping fold")
+                continue
+            
+            # Train Basic model for this fold
+            print(f"\n--- Training Basic Model (Fold {fold_idx+1}) ---")
+            trained_basic = train_model(
+                feature_columns=features_basic,
+                model_name=f"NN_Basic_Fold{fold_idx+1}",
+                df_train=df_train_fold,
+                df_val=df_val_fold,
+                df_test=df_test_fold
+            )
+            results_basic = evaluate_model(trained_basic)
+            all_fold_results_basic.append({
+                'fold': fold_config['name'],
+                'test_year': fold_config['test_end'][:4],
+                'mae': results_basic['metrics']['test']['mae'],
+            })
+            
+            # Train Full model for this fold
+            print(f"\n--- Training Full Model (Fold {fold_idx+1}) ---")
+            trained_full = train_model(
+                feature_columns=features_full,
+                model_name=f"NN_Full_Fold{fold_idx+1}",
+                df_train=df_train_fold,
+                df_val=df_val_fold,
+                df_test=df_test_fold
+            )
+            results_full = evaluate_model(trained_full)
+            all_fold_results_full.append({
+                'fold': fold_config['name'],
+                'test_year': fold_config['test_end'][:4],
+                'mae': results_full['metrics']['test']['mae'],
+            })
+            
+        # ==============================================================================
+        # CALCULATE AVERAGE PERFORMANCE
+        # ==============================================================================
+        
+        print("\n" + "="*80)
+        print("📊 WALK-FORWARD AVERAGE RESULTS (5 FOLDS)")
+        print("="*80)
+            
+        avg_mae_basic = np.mean([r['mae'] for r in all_fold_results_basic])
+        avg_mae_full = np.mean([r['mae'] for r in all_fold_results_full])
+        
+        bs_baseline = 24.14  # From preprocessing
+        
+        print(f"\n{'Model':<30} {'Avg Test MAE':<15} {'vs BS':<15}")
+        print("-" * 60)
+        print(f"{'BS (Historical Vol)':<30} ${bs_baseline:<14.2f} Baseline")
+        print(f"{'NN (Basic + Hist Vol)':<30} ${avg_mae_basic:<14.2f} {(bs_baseline-avg_mae_basic)/bs_baseline*100:+.1f}%")
+        print(f"{'NN (Full + IV + Greeks)':<30} ${avg_mae_full:<14.2f} {(bs_baseline-avg_mae_full)/bs_baseline*100:+.1f}%")
+        
+        print(f"\n📊 Fold-by-Fold Comparison:")
+        print(f"\n{'Fold':<12} {'Test Year':<12} {'BS MAE':<12} {'Basic MAE':<12} {'Full MAE':<12}")
+        print("-" * 60)
+        
+        bs_folds = [20.65, 18.00, 18.66, 21.37, 42.03]  # From preprocessing
+        
+        for idx, (r_basic, r_full, bs_mae) in enumerate(zip(all_fold_results_basic, all_fold_results_full, bs_folds)):
+            fold_name = r_basic['fold']
+            test_year = r_basic['test_year']
+            print(f"{fold_name:<12} {test_year:<12} ${bs_mae:<11.2f} ${r_basic['mae']:<11.2f} ${r_full['mae']:<11.2f}")
+        
+        print(f"\n{'Average':<12} {'All':<12} ${bs_baseline:<11.2f} ${avg_mae_basic:<11.2f} ${avg_mae_full:<11.2f}")
+        
+        print("\n✅ Walk-forward training completed!")
 
-    # Train Model 2: Full features
-    trained_full = train_model(features_full, "NN_Full")
-    results_full = evaluate_model(trained_full)
+    else:
+        # Train Model 1: Basic features
+        trained_basic = train_model(features_basic, "NN_Basic")
+        results_basic = evaluate_model(trained_basic)
 
+        # Train Model 2: Full features
+        trained_full = train_model(features_full, "NN_Full")
+        results_full = evaluate_model(trained_full)
+
+"""
     # ============================================================
     # STORE PREDICTIONS IN DATAFRAMES
     # ============================================================
@@ -648,7 +760,7 @@ def run_training():
     print(f"   3. The larger improvement on full sample confirms volatility smile capture")
     print(f"   4. NN still outperforms BS on ATM where smile effect is minimal")
 
-
+"""
 
 
 if __name__ == "__main__":
