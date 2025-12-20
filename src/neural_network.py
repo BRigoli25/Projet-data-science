@@ -1,11 +1,15 @@
 """
-Main training function
-Called by main.py
-Neural Network Models for SPX Option Pricing
-Compares basic features vs full features (with IV and Greeks)
+Neural Network for SPX Option Pricing
+=====================================
+
+Walk-forward validation (5 folds: 2021-2025)
+Uses FEATURES_BASIC from config.py (created in preprocessing)
+
+NOTE: This file does NOT create features - they come from data_preprocessing.py
 """
 import sys
 import os
+import csv
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.config import *
@@ -16,217 +20,83 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 from sklearn.preprocessing import StandardScaler
+import time
 
 
 def run_training():
     """Main training function called by main.py"""
     
+    WALK_FORWARD = True  # Set to False for single train/test split
+
     # ==============================================================================
     # WALK-FORWARD VALIDATION SETUP (5 FOLDS)
     # ==============================================================================
     
     fold_configs = [
-        {'name': 'Fold 1', 'train_end': '2020-12-31', 'val_start': '2020-01-01', 'val_end': '2020-12-31', 'test_end': '2021-12-31'},
-        {'name': 'Fold 2', 'train_end': '2021-12-31', 'val_start': '2021-01-01', 'val_end': '2021-12-31', 'test_end': '2022-12-31'},
-        {'name': 'Fold 3', 'train_end': '2022-12-31', 'val_start': '2022-01-01', 'val_end': '2022-12-31', 'test_end': '2023-12-31'},
-        {'name': 'Fold 4', 'train_end': '2023-12-31', 'val_start': '2023-01-01', 'val_end': '2023-12-31', 'test_end': '2024-12-31'},
-        {'name': 'Fold 5', 'train_end': '2024-12-31', 'val_start': '2024-01-01', 'val_end': '2024-12-31', 'test_end': '2025-08-29'},
-    ]
+    {'name': 'Fold 1', 'train_end': '2020-12-31', 'test_end': '2021-12-31'},
+    {'name': 'Fold 2', 'train_end': '2021-12-31', 'test_end': '2022-12-31'},
+    {'name': 'Fold 3', 'train_end': '2022-12-31', 'test_end': '2023-12-31'},
+    {'name': 'Fold 4', 'train_end': '2023-12-31', 'test_end': '2024-12-31'},
+    {'name': 'Fold 5', 'train_end': '2024-12-31', 'test_end': '2025-08-29'},
+]
     
-    WALK_FORWARD = True  # Set to False to disable
-
-    # ============================================================
+    
+    # ==============================================================================
     # LOAD DATA
-    # ============================================================
+    # ==============================================================================
+    
     print("="*60)
     print("NEURAL NETWORK FOR SPX OPTIONS")
     print("Using WRDS OptionMetrics Data")
     print("="*60)
 
-    df = pd.read_csv(SPX_BS_HIST_FILE)
+    df = pd.read_csv(SPX_BS_HIST_FILE, low_memory=False)
+    df['date'] = pd.to_datetime(df['date'])
     print(f"\nLoaded: {len(df):,} options")
     print(f"Columns available: {len(df.columns)}")
 
-    # ============================================================
-    # FEATURE ENGINEERING (Optimized for your data)
-    # ============================================================
+    # ==============================================================================
+    # VERIFY FEATURES EXIST (Created in preprocessing)
+    # ==============================================================================
+    
     print("\n" + "="*60)
-    print("FEATURE ENGINEERING")
+    print("VERIFYING FEATURES")
     print("="*60)
-
-    # Convert dates
-    df['date'] = pd.to_datetime(df['date'])
-    df['exdate'] = pd.to_datetime(df['exdate'])
-
-    # Time to maturity
-    df['days_to_maturity'] = (df['exdate'] - df['date']).dt.days
-    df['T'] = df['days_to_maturity'] / 365.25
-
-    # Core option features
-    df['moneyness'] = df['strike_price'] / df['forward_price']  # S/K
-    df['log_moneyness'] = np.log(df['moneyness'])
-    df['mid_price'] = (df['best_bid'] + df['best_offer']) / 2
-    df['is_call'] = (df['cp_flag'] == 'C').astype(float)
-
-    # Time transformations
-    df['log_T'] = np.log(df['T'])
-    df['sqrt_T'] = np.sqrt(df['T'])
-
-    # Critical interaction terms (from option pricing theory)
-    df['moneyness_T'] = df['moneyness'] * df['T']
-    df['log_moneyness_sqrt_T'] = df['log_moneyness'] * df['sqrt_T']
-
-    # Liquidity features
-    df['log_volume'] = np.log1p(df['volume'])
-    df['log_open_interest'] = np.log1p(df['open_interest'])
-    df['bid_ask_spread'] = (df['best_offer'] - df['best_bid']) / df['mid_price']
-    df['bid_ask_spread'] = df['bid_ask_spread'].clip(0, 1)  # Cap at 100%
-
-    # Market features
-    df['forward_price_norm'] = df['forward_price'] / df['forward_price'].mean()
-
-    # Volatility features (IMPLIED VOL AS FEATURE - NOT CIRCULAR IN NN!)
-    df['impl_vol'] = df['impl_volatility']
-    df['impl_vol_sqrt_T'] = df['impl_volatility'] * df['sqrt_T']
-    df['impl_vol_squared'] = df['impl_volatility'] ** 2
-    df['historical_vol_sqrt_T'] = df['historical_vol'] * df['sqrt_T']
-
-    # Greeks (HUGE ADVANTAGE - these capture market expectations)
-    df['abs_delta'] = df['delta'].abs()
-    df['gamma_norm'] = df['gamma'] * df['forward_price'] / 100
-    df['vega_norm'] = df['vega'] / 100
-    df['theta_norm'] = df['theta'] / 365
-
-    # Advanced Greek-based features
-    df['gamma_delta_ratio'] = df['gamma'] / (df['abs_delta'] + 1e-6)
-    df['vega_T'] = df['vega_norm'] * df['sqrt_T']
-
-    print("✅ Created comprehensive feature set with Greeks")
-
-    # ============================================================
-    # DATA FILTERING (More aggressive for quality)
-    # ============================================================
-    print("\n" + "="*60)
-    print("DATA FILTERING")
-    print("="*60)
-
-    # Check for missing values in key columns
-    print("\nMissing values check:")
-    key_cols = ['impl_volatility', 'delta', 'gamma', 'vega', 'theta', 'mid_price']
-    for col in key_cols:
-        missing = df[col].isna().sum()
-        print(f"  {col}: {missing:,} missing ({missing/len(df)*100:.2f}%)")
-
-    df_clean = df[
-        # Price validity
-        (df['best_bid'] > 0) &
-        (df['best_offer'] > df['best_bid']) &
-        (df['mid_price'] > 0.01) &
-        
-        # Moneyness range (wider for better generalization)
-        (df['moneyness'] >= 0.70) &
-        (df['moneyness'] <= 1.30) &
-        
-        # Time to maturity
-        (df['T'] > 1/365) &
-        (df['T'] < 2.0) &
-        
-        # Liquidity
-        (df['volume'] >= 10) &
-        (df['open_interest'] >= 100) &
-        
-        # Implied volatility bounds
-        (df['impl_volatility'] >= 0.05) &
-        (df['impl_volatility'] <= 1.0) &
-        
-        # Greeks availability (remove NaN)
-        (df['delta'].notna()) &
-        (df['gamma'].notna()) &
-        (df['vega'].notna()) &
-        (df['theta'].notna()) &
-        (df['mid_price'] > 0) &
-        
-        # European options only
-        (df['exercise_style'] == 'E') # should already be the case
-    ].copy()
-
-    print(f"\nOriginal: {len(df):,} options")
-    print(f"After filtering: {len(df_clean):,} options")
-    print(f"Removed: {len(df) - len(df_clean):,} options ({(1-len(df_clean)/len(df))*100:.1f}%)")
-
-    print(f"\nFiltered dataset statistics:")
-    print(f"  Moneyness: {df_clean['moneyness'].min():.2f} - {df_clean['moneyness'].max():.2f}")
-    print(f"  Time to maturity: {df_clean['T'].min():.3f} - {df_clean['T'].max():.3f} years")
-    print(f"  Price: ${df_clean['mid_price'].min():.2f} - ${df_clean['mid_price'].max():.2f}")
-    print(f"  Implied Vol: {df_clean['impl_volatility'].min():.1%} - {df_clean['impl_volatility'].max():.1%}")
-
-    # Remove extreme price outliers
-    price_q99 = df_clean['mid_price'].quantile(0.99)
-    df_clean = df_clean[df_clean['mid_price'] <= price_q99].copy()
-    print(f"After outlier removal: {len(df_clean):,} options")
-
-    # ============================================================
-    # TEMPORAL TRAIN/VAL/TEST SPLIT
-    # ============================================================
-    print("\n" + "="*60)
-    print("TEMPORAL DATA SPLIT")
-    print("="*60)
-
-    df_clean = df_clean.sort_values('date').reset_index(drop=True)
-
-    n = len(df_clean)
-    train_end = int(0.70 * n)
-    val_end = int(0.85 * n)
-
-    train_mask = df_clean.index < train_end
-    val_mask = (df_clean.index >= train_end) & (df_clean.index < val_end)
-    test_mask = df_clean.index >= val_end
-
-    # Show date ranges
-    print(f"\nTraining set:")
-    print(f"  Dates: {df_clean[train_mask]['date'].min()} to {df_clean[train_mask]['date'].max()}")
-    print(f"  Size: {train_mask.sum():,} options")
-
-    print(f"\nValidation set:")
-    print(f"  Dates: {df_clean[val_mask]['date'].min()} to {df_clean[val_mask]['date'].max()}")
-    print(f"  Size: {val_mask.sum():,} options")
-
-    print(f"\nTest set:")
-    print(f"  Dates: {df_clean[test_mask]['date'].min()} to {df_clean[test_mask]['date'].max()}")
-    print(f"  Size: {test_mask.sum():,} options")
-
-    # ============================================================
-    # FEATURE SELECTION: TWO VARIANTS
-    # ============================================================
-    print("\n" + "="*60)
-    print("FEATURE SET VARIANTS")
-    print("="*60)
-
-    # VARIANT 1: Basic features (no market signals)
+    
     features_basic = FEATURES_BASIC
+    missing_features = [f for f in features_basic if f not in df.columns]
+    
+    if missing_features:
+        print(f"❌ Missing features: {missing_features}")
+        print("   Run data_preprocessing.py first!")
+        return None
+    
+    print(f"✅ All {len(features_basic)} features available")
+    for feat in features_basic:
+        print(f"   ✓ {feat}")
 
-    # VARIANT 2: Full feature set (includes IV and Greeks)
-    features_full = FEATURES_FULL
+    # ==============================================================================
+    # PREPARE DATA
+    # ==============================================================================
+    
+    print("\n" + "="*60)
+    print("PREPARING DATA")
+    print("="*60)
 
-    print(f"\nVariant 1 - Basic (No Market Signals): {len(features_basic)} features")
-    print(f"  Purpose: Pure contract characteristics + liquidity")
-    print(f"  Features: moneyness, time, volume, open interest, bid-ask spread")
-
-    print(f"\nVariant 2 - Full (With Market Signals): {len(features_full)} features")
-    print(f"  Purpose: Basic + Implied Vol + Greeks")
-    print(f"  Additional: impl_vol, delta, gamma, vega, theta")
-
-    # Store dataframes for analysis (will be used by both models)
-    df_train = df_clean[train_mask].copy()
-    df_val = df_clean[val_mask].copy()
-    df_test = df_clean[test_mask].copy()
+    # Sort by date for temporal split
+    df = df.sort_values('date').reset_index(drop=True)
+    
+    # Remove any rows with missing features
+    df_clean = df.dropna(subset=features_basic + ['mid_price']).copy()
+    print(f"After removing NaNs: {len(df_clean):,} options")
+    print(f"Date range: {df_clean['date'].min().date()} to {df_clean['date'].max().date()}")
 
     # ============================================================
     # MODEL DEFINITION
     # ============================================================
 
     class OptionPricingMLP(nn.Module):
-        def __init__(self, input_size, hidden_sizes=[128, 64, 32], dropout_rate=0.2):
+        def __init__(self, input_size, hidden_sizes=[128, 64, 32], dropout_rate=0.3):
             super(OptionPricingMLP, self).__init__()
             
             layers = []
@@ -235,7 +105,7 @@ def run_training():
             for i, hidden_size in enumerate(hidden_sizes):
                 layers.append(nn.Linear(prev_size, hidden_size))
                 layers.append(nn.BatchNorm1d(hidden_size))
-                layers.append(nn.ReLU())
+                layers.append(nn.LeakyReLU(0.1))
                 layers.append(nn.Dropout(dropout_rate))
                 prev_size = hidden_size
             
@@ -256,8 +126,8 @@ def run_training():
     # TRAINING FUNCTION
     # ============================================================
 
-    def train_model(feature_columns, model_name, df_train, df_val, df_test, num_epochs=300, batch_size=2048, 
-                    learning_rate=0.001, patience=30):
+    def train_model(feature_columns, model_name, df_train, df_val, df_test, num_epochs=300, batch_size=4096, 
+                    learning_rate=0.001, patience=60):
         """
         Train a neural network model for option pricing
         
@@ -296,7 +166,7 @@ def run_training():
         X_test = df_test[feature_columns].values
         y_test = df_test['mid_price'].values
             
-        # Check and clean data
+        # Check for nan values
         def check_and_clean(X):
             if np.isnan(X).sum() > 0 or np.isinf(X).sum() > 0:
                 print(f"  ⚠️  Cleaning {np.isnan(X).sum()} NaNs and {np.isinf(X).sum()} Infs")
@@ -317,7 +187,6 @@ def run_training():
         
         y_train_scaled = scaler_y.fit_transform(y_train.reshape(-1, 1)).flatten()
         y_val_scaled = scaler_y.transform(y_val.reshape(-1, 1)).flatten()
-        y_test_scaled = scaler_y.transform(y_test.reshape(-1, 1)).flatten()
         
         print("✅ Data prepared and scaled")
         
@@ -332,7 +201,7 @@ def run_training():
         mlp_model = OptionPricingMLP(
             input_size=input_size,
             hidden_sizes=[128, 64, 32],
-            dropout_rate=0.2
+            dropout_rate=0.3
         ).to(device)
         
         total_params = sum(p.numel() for p in mlp_model.parameters())
@@ -351,7 +220,6 @@ def run_training():
         X_val_tensor = torch.FloatTensor(X_val_scaled).to(device)
         y_val_tensor = torch.FloatTensor(y_val_scaled).reshape(-1, 1).to(device)
         X_test_tensor = torch.FloatTensor(X_test_scaled).to(device)
-        y_test_tensor = torch.FloatTensor(y_test_scaled).reshape(-1, 1).to(device)
         
         train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -366,6 +234,9 @@ def run_training():
         print(f"\nTraining for max {num_epochs} epochs...")
         print(f"Batch size: {batch_size}, Learning rate: {learning_rate}, Patience: {patience}")
         
+
+        start_time = time.perf_counter() # starting point to measure training time
+
         for epoch in range(num_epochs):
             # Training phase
             mlp_model.train()
@@ -411,6 +282,21 @@ def run_training():
                 if patience_counter >= patience:
                     print(f"\n⚠️  Early stopping triggered at epoch {epoch+1}")
                     break
+        # End of training time 
+        total_time = time.perf_counter() - start_time
+        print(f"\n⏱️ Training time for {model_name}: {total_time:.1f} seconds "
+        f"({total_time/60:.1f} minutes)")
+        # Save time to csv
+        runtime_path = os.path.join(RESULTS_DIR, "training_times.csv")
+        header = ["model_name", "n_train", "n_val", "n_test", "seconds"]
+        row = [model_name, len(df_train), len(df_val), len(df_test), total_time]
+
+        file_exists = os.path.exists(runtime_path)
+        with open(runtime_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(header)
+            writer.writerow(row)
         
         # Load best model from saved file
         model_path = os.path.join(MODELS_DIR, f'best_{model_name}.pth')
@@ -535,7 +421,7 @@ def run_training():
         }
 
     # ============================================================
-    # TRAIN MODELS WITH WALK-FORWARD VALIDATION
+    # WALK-FORWARD TRAINING
     # ============================================================
 
     print("\n" + "="*80)
@@ -548,64 +434,58 @@ def run_training():
         print("="*80)
         
         all_fold_results_basic = []
-        all_fold_results_full = []
+        #all_fold_results_full = []
         
         for fold_idx, fold_config in enumerate(fold_configs):
             print(f"\n{'='*80}")
             print(f"FOLD {fold_idx+1}/5: {fold_config['name']}")
             print(f"{'='*80}")
             
-            # Create date-based masks for this fold
-            train_mask_fold = df_clean['date'] <= fold_config['train_end']
-            val_mask_fold = (df_clean['date'] >= fold_config['val_start']) & (df_clean['date'] <= fold_config['val_end'])
-            test_mask_fold = (df_clean['date'] > fold_config['train_end']) & (df_clean['date'] <= fold_config['test_end'])
+            # Use ALL data up to train_end (like Random Forest)
+            train_mask = df_clean['date'] <= fold_config['train_end']
+            test_mask = (df_clean['date'] > fold_config['train_end']) & (df_clean['date'] <= fold_config['test_end'])
             
-            df_train_fold = df_clean[train_mask_fold].copy()
-            df_val_fold = df_clean[val_mask_fold].copy()
-            df_test_fold = df_clean[test_mask_fold].copy()
+            df_train_fold = df_clean[train_mask].copy()  # ALL training data
+            df_test_fold = df_clean[test_mask].copy()
+            
+            # Use last 15% of training data for validation (early stopping only)
+            n_total = len(df_train_fold)
+            n_val_start = int(0.85 * n_total)
+            df_val_fold = df_train_fold.iloc[n_val_start:].copy()
             
             print(f"\nTrain: {len(df_train_fold):,} options (up to {fold_config['train_end']})")
-            print(f"Val:   {len(df_val_fold):,} options ({fold_config['val_start']} to {fold_config['val_end']})")
-            print(f"Test:  {len(df_test_fold):,} options (up to {fold_config['test_end']})")
-            
+            print(f"Val:   {len(df_val_fold):,} options (last 15%, for early stopping)")
+            print(f"Test:  {len(df_test_fold):,} options ({fold_config['test_end'][:4]})")
+                    
             if len(df_test_fold) < 100:
                 print(f"⚠️  Insufficient test data, skipping fold")
                 continue
             
-            # Train Basic model for this fold
+            # Train Basic model
             print(f"\n--- Training Basic Model (Fold {fold_idx+1}) ---")
             trained_basic = train_model(
                 feature_columns=features_basic,
                 model_name=f"NN_Basic_Fold{fold_idx+1}",
                 df_train=df_train_fold,
                 df_val=df_val_fold,
-                df_test=df_test_fold
+                df_test=df_test_fold,
+                num_epochs=300,
+                batch_size=2048,
+                learning_rate=0.001,
+                patience=60
             )
             results_basic = evaluate_model(trained_basic)
+            
             all_fold_results_basic.append({
                 'fold': fold_config['name'],
                 'test_year': fold_config['test_end'][:4],
                 'mae': results_basic['metrics']['test']['mae'],
+                'rmse': results_basic['metrics']['test']['rmse'],
             })
-            
-            # Train Full model for this fold
-            print(f"\n--- Training Full Model (Fold {fold_idx+1}) ---")
-            trained_full = train_model(
-                feature_columns=features_full,
-                model_name=f"NN_Full_Fold{fold_idx+1}",
-                df_train=df_train_fold,
-                df_val=df_val_fold,
-                df_test=df_test_fold
-            )
-            results_full = evaluate_model(trained_full)
-            all_fold_results_full.append({
-                'fold': fold_config['name'],
-                'test_year': fold_config['test_end'][:4],
-                'mae': results_full['metrics']['test']['mae'],
-            })
-            
+    
+
         # ==============================================================================
-        # CALCULATE AVERAGE PERFORMANCE
+        # SUMMARY
         # ==============================================================================
         
         print("\n" + "="*80)
@@ -613,7 +493,7 @@ def run_training():
         print("="*80)
             
         avg_mae_basic = np.mean([r['mae'] for r in all_fold_results_basic])
-        avg_mae_full = np.mean([r['mae'] for r in all_fold_results_full])
+        #avg_mae_full = np.mean([r['mae'] for r in all_fold_results_full])
         
         bs_baseline = 24.14  # From preprocessing
         
@@ -621,147 +501,57 @@ def run_training():
         print("-" * 60)
         print(f"{'BS (Historical Vol)':<30} ${bs_baseline:<14.2f} Baseline")
         print(f"{'NN (Basic + Hist Vol)':<30} ${avg_mae_basic:<14.2f} {(bs_baseline-avg_mae_basic)/bs_baseline*100:+.1f}%")
-        print(f"{'NN (Full + IV + Greeks)':<30} ${avg_mae_full:<14.2f} {(bs_baseline-avg_mae_full)/bs_baseline*100:+.1f}%")
+        #print(f"{'NN (Full + IV + Greeks)':<30} ${avg_mae_full:<14.2f} {(bs_baseline-avg_mae_full)/bs_baseline*100:+.1f}%")
         
         print(f"\n📊 Fold-by-Fold Comparison:")
         print(f"\n{'Fold':<12} {'Test Year':<12} {'BS MAE':<12} {'Basic MAE':<12} {'Full MAE':<12}")
         print("-" * 60)
         
-        bs_folds = [20.65, 18.00, 18.66, 21.37, 42.03]  # From preprocessing
+        for r in all_fold_results_basic:
+            print(f"{r['fold']:<12} {r['test_year']:<12} ${r['mae']:<11.2f} ${r['rmse']:<11.2f}")
         
-        for idx, (r_basic, r_full, bs_mae) in enumerate(zip(all_fold_results_basic, all_fold_results_full, bs_folds)):
-            fold_name = r_basic['fold']
-            test_year = r_basic['test_year']
-            print(f"{fold_name:<12} {test_year:<12} ${bs_mae:<11.2f} ${r_basic['mae']:<11.2f} ${r_full['mae']:<11.2f}")
+        print("-" * 48)
+        print(f"{'Average':<12} {'All':<12} ${avg_mae_basic:<11.2f}")
         
-        print(f"\n{'Average':<12} {'All':<12} ${bs_baseline:<11.2f} ${avg_mae_basic:<11.2f} ${avg_mae_full:<11.2f}")
+        # Save results
+        results_df = pd.DataFrame(all_fold_results_basic)
+        results_df.to_csv(os.path.join(RESULTS_DIR, 'nn_walk_forward_results.csv'), index=False)
+        print(f"\n✅ Results saved to: nn_walk_forward_results.csv")
         
         print("\n✅ Walk-forward training completed!")
-
+        
+        return results_df
+    
     else:
-        # Train Model 1: Basic features
-        trained_basic = train_model(features_basic, "NN_Basic")
+         # Single split mode (for quick testing)
+        print("\n" + "="*60)
+        print("SINGLE SPLIT TRAINING")
+        print("="*60)
+        
+        n = len(df_clean)
+        train_end = int(0.70 * n)
+        val_end = int(0.85 * n)
+        
+        df_train = df_clean.iloc[:train_end].copy()
+        df_val = df_clean.iloc[train_end:val_end].copy()
+        df_test = df_clean.iloc[val_end:].copy()
+        
+        trained_basic = train_model(features_basic, "NN_Basic", df_train, df_val, df_test)
         results_basic = evaluate_model(trained_basic)
-
-        # Train Model 2: Full features
-        trained_full = train_model(features_full, "NN_Full")
-        results_full = evaluate_model(trained_full)
-
-"""
-    # ============================================================
-    # STORE PREDICTIONS IN DATAFRAMES
-    # ============================================================
-
-    # Store predictions for visualization
-    df_train['mlp_price_basic'] = results_basic['predictions']['train']
-    df_train['mlp_price_full'] = results_full['predictions']['train']
-
-    df_val['mlp_price_basic'] = results_basic['predictions']['val']
-    df_val['mlp_price_full'] = results_full['predictions']['val']
-
-    df_test['mlp_price_basic'] = results_basic['predictions']['test']
-    df_test['mlp_price_full'] = results_full['predictions']['test']
-
-    # Calculate errors
-    for prefix, col in [('basic', 'mlp_price_basic'), ('full', 'mlp_price_full')]:
-        for dset in [df_train, df_val, df_test]:
-            dset[f'mlp_error_{prefix}'] = dset[col] - dset['mid_price']
-            dset[f'mlp_abs_error_{prefix}'] = dset[f'mlp_error_{prefix}'].abs()
-            dset[f'mlp_pct_error_{prefix}'] = (dset[f'mlp_error_{prefix}'] / dset['mid_price']).abs() * 100
-
-    # ============================================================
-    # COMPREHENSIVE COMPARISON
-    # ============================================================
-
-    print("\n" + "="*80)
-    print("📊 MODEL COMPARISON SUMMARY")
-    print("="*80)
-
-    # Get metrics
-    basic_test = results_basic['metrics']['test']
-    full_test = results_full['metrics']['test']
-
-    print(f"\n{'Model':<25} {'Train MAE':<12} {'Val MAE':<12} {'Test MAE':<12} {'Test RMSE':<12}")
-    print("-" * 80)
-    print(f"{'BS (Historical Vol)':<25} ${'22.00':<11} ${'22.00':<11} ${'22.00':<11} ${'30.00':<11}")
-    print(f"{'NN (Basic Features)':<25} ${results_basic['metrics']['train']['mae']:<11.2f} "
-        f"${results_basic['metrics']['val']['mae']:<11.2f} "
-        f"${basic_test['mae']:<11.2f} ${basic_test['rmse']:<11.2f}")
-    print(f"{'NN (Full Features)':<25} ${results_full['metrics']['train']['mae']:<11.2f} "
-        f"${results_full['metrics']['val']['mae']:<11.2f} "
-        f"${full_test['mae']:<11.2f} ${full_test['rmse']:<11.2f}")
-
-    print(f"\n{'Model':<25} {'vs BS (%)':<15} {'vs NN Basic (%)':<20}")
-    print("-" * 60)
-    basic_improvement = ((22.00 - basic_test['mae']) / 22.00) * 100
-    full_improvement = ((22.00 - full_test['mae']) / 22.00) * 100
-    full_vs_basic = ((basic_test['mae'] - full_test['mae']) / basic_test['mae']) * 100
-
-    print(f"{'NN (Basic Features)':<25} {basic_improvement:>13.1f}%  {'—':<20}")
-    print(f"{'NN (Full Features)':<25} {full_improvement:>13.1f}%  {full_vs_basic:>18.1f}%")
-
-    # Save both predictions
-    df_test[['date', 'strike_price', 'mid_price', 'mlp_price_basic', 'mlp_price_full', 
-            'mlp_abs_error_basic', 'mlp_abs_error_full']].to_csv(TEST_PREDICTIONS_FILE, index=False)
-    print(f"✅ Predictions saved to: {TEST_PREDICTIONS_FILE}")
-
-    # Store results for visualization
-    train_losses_basic = results_basic['train_losses']
-    val_losses_basic = results_basic['val_losses']
-    train_losses_full = results_full['train_losses']
-    val_losses_full = results_full['val_losses']
-    feature_columns = results_full['feature_columns']  # Use full features for feature importance
-
-    print("\n✅ Both models trained and evaluated successfully!")
-    print("Ready for visualization...")
-
-    # ==============================================================================
-    # ATM-ONLY ANALYSIS 
-    # ==============================================================================
-
-    print("\n" + "="*80)
-    print("📊 ATM-ONLY PERFORMANCE COMPARISON (Moneyness 0.95-1.05)")
-    print("="*80)
-
-    # Filter for ATM options
-    atm_mask_test = (df_test['moneyness'] >= 0.95) & (df_test['moneyness'] <= 1.05)
-    df_test_atm = df_test[atm_mask_test].copy()
-
-    print(f"\nATM Options in test set: {len(df_test_atm):,} ({len(df_test_atm)/len(df_test)*100:.1f}%)")
-
-    # Calculate MAE on ATM only
-    if 'abs_error_hist' in df_test_atm.columns:
-        bs_hist_atm_mae = df_test_atm['abs_error_hist'].mean()
-    else:
-        print("⚠️  Warning: BS historical errors not in dataframe. Run preprocessing first.")
-        bs_hist_atm_mae = None
-
-    nn_basic_atm_mae = df_test_atm['mlp_abs_error_basic'].mean()
-    nn_full_atm_mae = df_test_atm['mlp_abs_error_full'].mean()
-
-    print(f"\n{'Model':<25} {'Full Sample':<15} {'ATM Only':<15} {'ATM Improvement':<15}")
-    print("-" * 70)
-
-    if bs_hist_atm_mae:
-        print(f"{'BS (Historical Vol)':<25} ${results_basic['metrics']['test']['mae']:.2f} (baseline)   ${bs_hist_atm_mae:.2f}         —")
-        basic_atm_imp = (bs_hist_atm_mae - nn_basic_atm_mae) / bs_hist_atm_mae * 100
-        full_atm_imp = (bs_hist_atm_mae - nn_full_atm_mae) / bs_hist_atm_mae * 100
-    else:
-        print(f"{'BS (Historical Vol)':<25} $22.04 (baseline)   $XX.XX          —")
-        basic_atm_imp = 0
-        full_atm_imp = 0
-
-    print(f"{'NN (Basic + Hist Vol)':<25} ${results_basic['metrics']['test']['mae']:.2f}           ${nn_basic_atm_mae:.2f}         {basic_atm_imp:+.1f}%")
-    print(f"{'NN (Full + IV)':<25} ${results_full['metrics']['test']['mae']:.2f}            ${nn_full_atm_mae:.2f}          {full_atm_imp:+.1f}%")
-
-    print(f"\n📊 Key Findings:")
-    print(f"   1. On full sample (0.80-1.20): NN (Full) improves by {full_vs_basic:.1f}% over NN (Basic)")
-    print(f"   2. On ATM only (0.95-1.05): NN (Full) improves by {(nn_basic_atm_mae - nn_full_atm_mae)/nn_basic_atm_mae*100:.1f}% over NN (Basic)")
-    print(f"   3. The larger improvement on full sample confirms volatility smile capture")
-    print(f"   4. NN still outperforms BS on ATM where smile effect is minimal")
-
-"""
+        
+        return results_basic
+    
+# ============================================================
+# NOTE: Full model (IV + Greeks) excluded
+# ============================================================
+# IV (implied volatility) is derived from market prices via BS inversion,
+# so using it to predict prices creates circular reasoning.
+# The Full model achieved ~$1.73 MAE but is methodologically problematic.
+# See thesis discussion section.
+# ============================================================
 
 
 if __name__ == "__main__":
     run_training()
+
+

@@ -40,6 +40,8 @@ SPX_MERGED_FILE = os.path.join(RESULTS_DIR, 'SPX_MERGED_TO_USE.csv')
 SPX_CLEAN_FILE = os.path.join(RESULTS_DIR, 'SPX_Clean_Merged.csv')
 SPX_BS_BOTH_FILE = os.path.join(RESULTS_DIR, 'SPX_with_BS_Both_Vols.csv')
 SPX_BS_HIST_FILE = os.path.join(RESULTS_DIR, 'SPX_with_BS_Historical.csv')
+# Fully engineered feature set used by all models
+SPX_FEATURES_FILE = os.path.join(RESULTS_DIR, 'SPX_features.csv')
 
 # Neural network predictions
 TEST_PREDICTIONS_FILE = os.path.join(RESULTS_DIR, 'test_predictions_comparison.csv')

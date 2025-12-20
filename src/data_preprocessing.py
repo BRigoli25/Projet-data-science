@@ -1,6 +1,18 @@
 """
 SPX OPTIONS DATA PREPROCESSING AND BLACK-SCHOLES BASELINE
-Adapted for modular project structure
+=========================================================
+
+Centralizes ALL feature engineering for the project.
+
+Steps:
+1. Load and merge options with forward prices
+2. Data cleaning and filtering
+3. Feature engineering (ALL features created here)
+4. Risk-free rates from FRED
+5. Historical volatility calculation
+6. Black-Scholes baseline pricing
+7. Walk-forward validation splits
+8. Save processed data
 """
 import sys
 import os
@@ -37,10 +49,6 @@ def run_preprocessing():
     print("\nOptions Structure:")
     print(f"Columns: {df_options_sample.columns.tolist()}")
     print(f"Sample:\n{df_options_sample.head()}")
-
-    # Save samples for reference
-    df_forward_sample.to_csv('SPX_Forward_Prices_sample_1000rows.csv')
-    df_options_sample.to_csv('SPX_Options_sample_1000rows.csv')
 
     # ==============================================================================
     # STEP 2: MERGE OPTIONS WITH FORWARD PRICES
@@ -92,20 +100,22 @@ def run_preprocessing():
     df = df_merged[df_merged['forward_price'].notna()].copy()
     print(f"After removing missing forwards: {len(df):,} rows")
 
-    df.to_csv('SPX_MERGED_TO_USE.csv') #We save here the complete data available
+    # Save complete merged data (before filtering)
+    df.to_csv(os.path.join(RESULTS_DIR, 'SPX_MERGED_BEFORE_FILTERING.csv'), index=False)
+    print(f"✅ Saved raw merged data: SPX_MERGED_BEFORE_FILTERING.csv")
 
     # ==============================================================================
-    # STEP 3: DATA CLEANING AND FEATURE ENGINEERING
+    # STEP 3: DATA CLEANING AND BASIC CALCULATIONS
     # ==============================================================================
 
     print("\n" + "="*60)
-    print("STEP 3: DATA CLEANING AND FEATURE ENGINEERING")
+    print("STEP 3: DATA CLEANING AND BASIC CALCULATIONS")
     print("="*60)
 
     # Fix strike prices (WRDS stores in pennies, we need dollars)
     df['strike_price'] = df['strike_price'] / 1000
 
-    # Calculate moneyness (S/K ratio) used in many papers for efficiency
+    # Calculate moneyness (K/F ratio)
     df['moneyness'] = df['strike_price'] / df['forward_price']
 
     # Calculate time to maturity in years
@@ -114,9 +124,62 @@ def run_preprocessing():
     # Calculate mid-price (average of bid and ask)
     df['mid_price'] = (df['best_bid'] + df['best_offer']) / 2
 
+    # ==============================================================================
+    # STEP 4: FEATURE ENGINEERING (CENTRALIZED - ALL FEATURES HERE)
+    # ==============================================================================
 
-    # Filter for quality (flexible to have more or less)
-    print("\nFiltering for quality data...")
+    print("\n" + "="*60)
+    print("STEP 4: FEATURE ENGINEERING (Centralized)")
+    print("="*60)
+
+    # Log transformations for moneyness
+    df['log_moneyness'] = np.log(df['moneyness'])
+    
+    # Time transformations
+    df['sqrt_T'] = np.sqrt(df['T'])
+    df['log_T'] = np.log(df['T'] + 1e-10)
+    
+    # Binary indicator for call/put
+    df['is_call'] = (df['cp_flag'] == 'C').astype(int)
+    
+    # Normalized forward price (relative to mean)
+    df['forward_price_norm'] = df['forward_price'] / df['forward_price'].mean()
+    
+    # Interaction terms (following Hutchinson et al. methodology)
+    df['moneyness_T'] = df['moneyness'] * df['T']
+    df['log_moneyness_sqrt_T'] = df['log_moneyness'] * df['sqrt_T']
+    
+    # Liquidity features (log-transformed for stability)
+    df['log_volume'] = np.log(df['volume'] + 1)
+    df['log_open_interest'] = np.log(df['open_interest'] + 1)
+    
+    # Market microstructure feature
+    df['bid_ask_spread'] = df['best_offer'] - df['best_bid']
+    
+    # Moneyness bucket for analysis
+    df['money_bucket'] = pd.cut(
+        df['moneyness'], 
+        bins=[0, 0.95, 1.05, 3.0], 
+        labels=['OTM', 'ATM', 'ITM']
+    )
+
+    print("✅ Created features:")
+    print("   - log_moneyness, sqrt_T, log_T")
+    print("   - is_call, forward_price_norm")
+    print("   - moneyness_T, log_moneyness_sqrt_T")
+    print("   - log_volume, log_open_interest, bid_ask_spread")
+    print("   - money_bucket (OTM/ATM/ITM)")
+
+    # ==============================================================================
+    # STEP 5: DATA FILTERING
+    # ==============================================================================
+
+    print("\n" + "="*60)
+    print("STEP 5: DATA FILTERING")
+    print("="*60)
+
+    print(f"Before filtering: {len(df):,} rows")
+
     df = df[
         (df['moneyness'] >= 0.8) &
         (df['moneyness'] <= 1.2) &
@@ -124,30 +187,40 @@ def run_preprocessing():
         (df['open_interest'] >= 100) &
         (df['impl_volatility'] >= 0.05) &
         (df['impl_volatility'] <= 1.0) &
-        (df['T'] > 0.001) &
+        (df['T'] > 0.005) &
+        (df['T'] <= 2.0) &
         (df['best_bid'] > 0) &
         (df['best_offer'] > df['best_bid']) &
-        (df['exercise_style'] == 'E')   #should already be the case
+        (df['exercise_style'] == 'E') 
     ].copy()
 
     print(f"After filtering: {len(df):,} rows")
+
+    price_low = df['mid_price'].quantile(0.01)
+    price_high = df['mid_price'].quantile(0.99)
+    df = df[(df['mid_price'] >= price_low) & (df['mid_price'] <= price_high)].copy()
+    print(f"After outlier removal: {len(df):,} rows")
 
     print(f"\nData ranges:")
     print(f"  Forward price: ${df['forward_price'].min():.0f} - ${df['forward_price'].max():.0f}")
     print(f"  Strike price: ${df['strike_price'].min():.0f} - ${df['strike_price'].max():.0f}")
     print(f"  Moneyness: {df['moneyness'].min():.3f} - {df['moneyness'].max():.3f}")
     print(f"  Time to maturity: {df['T'].min():.3f} - {df['T'].max():.3f} years")
+    print(f"  Mid Price: ${df['mid_price'].min():.2f} - ${df['mid_price'].max():.2f}")
+    print(f"  Implied Vol: {df['impl_volatility'].min()*100:.1f}% - {df['impl_volatility'].max()*100:.1f}%")
 
-    # Save merged data
+    # Save filtered data
     df.to_csv(SPX_MERGED_FILE, index=False)
     print(f"\n✅ Saved: SPX_Clean_Merged.csv ({len(df):,} rows)")
 
+
+
     # ==============================================================================
-    # STEP 4: DOWNLOAD RISK-FREE RATES (3-MONTH TREASURY BILLS)
+    # STEP 6: DOWNLOAD RISK-FREE RATES (3-MONTH TREASURY BILLS)
     # ==============================================================================
 
     print("\n" + "="*60)
-    print("STEP 4: DOWNLOADING RISK-FREE RATES FROM FRED")
+    print("STEP 6: DOWNLOADING RISK-FREE RATES FROM FRED")
     print("="*60)
 
     # Check if treasury rates file already exists
@@ -214,11 +287,11 @@ def run_preprocessing():
         
         
     # ==============================================================================
-    # STEP 5: CALCULATE HISTORICAL VOLATILITY (HUTCHINSON METHODOLOGY)
+    # STEP 7: CALCULATE HISTORICAL VOLATILITY (HUTCHINSON METHODOLOGY)
     # ==============================================================================
 
     print("\n" + "="*60)
-    print("STEP 5: CALCULATING HISTORICAL VOLATILITY")
+    print("STEP 7: CALCULATING HISTORICAL VOLATILITY")
     print("="*60)
 
     """
@@ -255,13 +328,15 @@ def run_preprocessing():
     # Count options with valid historical volatility
     df_hist = df[df['historical_vol'].notna()].copy()
     print(f"\nOptions with historical volatility: {len(df_hist):,} ({100*len(df_hist)/len(df):.1f}%)")
+    df_hist['historical_vol_sqrt_T'] = df_hist['historical_vol'] * df_hist['sqrt_T']
+    print(f"✅ Added historical_vol_sqrt_T interaction feature")
 
     # ==============================================================================
-    # STEP 6: BLACK-SCHOLES OPTION PRICING FORMULA
+    # STEP 8: BLACK-SCHOLES OPTION PRICING FORMULA
     # ==============================================================================
 
     print("\n" + "="*60)
-    print("STEP 6: IMPLEMENTING BLACK-SCHOLES FORMULA")
+    print("STEP 8: IMPLEMENTING BLACK-SCHOLES FORMULA")
     print("="*60)
 
     def black_scholes(S, K, T, r, sigma, option_type='C'):
@@ -315,30 +390,21 @@ def run_preprocessing():
         price = np.where(is_call, call_price, put_price)
         
         return price
-
-    # ==============================================================================
-    # STEP 7: CALCULATE BLACK-SCHOLES PRICES (TWO VERSIONS)
-    # ==============================================================================
-
-    print("\n" + "="*60)
-    print("STEP 7: CALCULATING BLACK-SCHOLES BASELINE PRICES")
-    print("="*60)
-
-    # Version 1: Black-Scholes with IMPLIED VOLATILITY (from market)
+    
+    # Version 1: Black-Scholes with IMPLIED VOLATILITY (Sanity check)
     print("\nCalculating BS with implied volatility...")
-    df['bs_price'] = black_scholes(
-        S=df['forward_price'].values,
-        K=df['strike_price'].values,
-        T=df['T'].values,
-        r=df['r'].values,
-        sigma=df['impl_volatility'].values,
-        option_type=df['cp_flag'].values
+    df_hist['bs_price'] = black_scholes(
+        S=df_hist['forward_price'].values,
+        K=df_hist['strike_price'].values,
+        T=df_hist['T'].values,
+        r=df_hist['r'].values,
+        sigma=df_hist['impl_volatility'].values,
+        option_type=df_hist['cp_flag'].values
     )
 
     # Calculate errors for BS(IV)
-    df['bs_error'] = df['bs_price'] - df['mid_price']
-    df['abs_error'] = df['bs_error'].abs()
-    df['pct_error'] = (df['bs_error'] / df['mid_price']) * 100
+    df_hist['bs_error'] = df_hist['bs_price'] - df_hist['mid_price']
+    df_hist['abs_error'] = df_hist['bs_error'].abs()
 
     # Version 2: Black-Scholes with HISTORICAL VOLATILITY (Hutchinson style) 
     # More representative as calculating with implied vol is by definition what 
@@ -357,54 +423,45 @@ def run_preprocessing():
     # Calculate errors for BS(HV)
     df_hist['bs_error_hist'] = df_hist['bs_price_hist'] - df_hist['mid_price']
     df_hist['abs_error_hist'] = df_hist['bs_error_hist'].abs()
-    df_hist['pct_error_hist'] = (df_hist['bs_error_hist'] / df_hist['mid_price']) * 100
 
     # ==============================================================================
-    # STEP 8: PERFORMANCE EVALUATION
+    # STEP 9: PERFORMANCE EVALUATION
     # ==============================================================================
 
     print("\n" + "="*60)
-    print("STEP 8: BLACK-SCHOLES PERFORMANCE EVALUATION")
+    print("STEP 9: BLACK-SCHOLES PERFORMANCE EVALUATION")
     print("="*60)
 
-    print("\n📊 BLACK-SCHOLES WITH IMPLIED VOLATILITY:")
-    print(f"  Options: {len(df):,}")
-    print(f"  MAE:  ${df['abs_error'].mean():.2f}")
-    print(f"  RMSE: ${np.sqrt((df['bs_error']**2).mean()):.2f}")
-    #print(f"  MAPE: {df['pct_error'].abs().mean():.2f}%")
-    print(f"  Bias: ${df['bs_error'].mean():.2f}")
+    #print("\n📊 BLACK-SCHOLES WITH IMPLIED VOLATILITY:")
+    print(f"  Options: {len(df_hist):,}")
+    print(f"  MAE:  ${df_hist['abs_error'].mean():.2f}")
+    print(f"  RMSE: ${np.sqrt((df_hist['bs_error']**2).mean()):.2f}")
+    print(f"  Bias: ${df_hist['bs_error'].mean():.2f}")
 
-    print("\n  By Option Type:")
-    for opt in ['C', 'P']:
-        subset = df[df['cp_flag'] == opt]
-        print(f"    {opt}: MAE=${subset['abs_error'].mean():.2f}, n={len(subset):,}")
 
-    print("\n  By Year:")
-    yearly = df.groupby(df['date'].dt.year)['abs_error'].agg(['mean', 'count'])
-    print(yearly)
-
-    print("\n  By Moneyness:")
-    df['money_bucket'] = pd.cut(df['moneyness'], bins=[0, 0.9, 1.1, 3.0], labels=['OTM', 'ATM', 'ITM'])
-    print(df.groupby('money_bucket', observed=True)['abs_error'].agg(['mean', 'count']))
-
-    print("\n📊 BLACK-SCHOLES WITH HISTORICAL VOLATILITY (Hutchinson 1994):")
+    print("\n📊 BLACK-SCHOLES WITH HISTORICAL VOLATILITY (Baseline):")
     print(f"  Options: {len(df_hist):,}")
     print(f"  MAE:  ${df_hist['abs_error_hist'].mean():.2f}")
     print(f"  RMSE: ${np.sqrt((df_hist['bs_error_hist']**2).mean()):.2f}")
-    #print(f"  MAPE: {df_hist['pct_error_hist'].abs().mean():.2f}%")
     print(f"  Bias: ${df_hist['bs_error_hist'].mean():.2f}")
+
 
     print("\n  By Option Type:")
     for opt in ['C', 'P']:
         subset = df_hist[df_hist['cp_flag'] == opt]
         print(f"    {opt}: MAE=${subset['abs_error_hist'].mean():.2f}, n={len(subset):,}")
 
+    print("\n  By Year:")
+    yearly = df_hist.groupby(df_hist['date'].dt.year)['abs_error'].agg(['mean', 'count'])
+    print(yearly)
+
+
     # ==============================================================================
-    # STEP 8.5: WALK_FORWARD VALIDATION SPLITS
+    # STEP 10: WALK-FORWARD VALIDATION SPLITS
     # ==============================================================================
 
     print("\n" + "="*60)
-    print("STEP 8.5: CREATING TEMPORAL DATA SPLITS")
+    print("STEP 10: WALK-FORWARD VALIDATION ANALYSIS")
     print("="*60)
 
     # Sort by date for temporal split
@@ -427,9 +484,8 @@ def run_preprocessing():
 
     for fold in fold_configs:
         fold_name = fold['name']
-        train_mask = df_hist['date'] <= fold['train_end']
+        #train_mask = df_hist['date'] <= fold['train_end']
         test_mask = (df_hist['date'] > fold['train_end']) & (df_hist['date'] <= fold['test_end'])
-        
         df_test_fold = df_hist[test_mask].copy()
         
         if len(df_test_fold) == 0:
@@ -459,7 +515,7 @@ def run_preprocessing():
         })
         
         print(f"\n{fold_name}:")
-        print(f"  Train: 2018-03-29 to {fold['train_end']}")
+        #print(f"  Train: 2018-03-29 to {fold['train_end']}")
         print(f"  Test:  {pd.to_datetime(fold['train_end']) + pd.Timedelta(days=1)} to {fold['test_end']}")
         print(f"  Test size: {len(df_test_fold):,} options")
         print(f"  BS(HV) MAE: ${mae:.2f}")
@@ -478,11 +534,14 @@ def run_preprocessing():
 
     print("\nFold-by-Fold Summary:")
     print(f"{'Fold':<10} {'Test Year':<12} {'MAE':<10} {'MAE (ATM)':<12}")
-    print("-" * 44)
+    print("-" * 32)
     for r in fold_results:
         test_year = r['test_end'][:4]
         print(f"{r['fold']:<10} {test_year:<12} ${r['mae']:<9.2f} ${r['mae_atm']:<11.2f}")
-
+    print("-" * 32)
+    print(f"{'Average':<10} {'All':<12} ${avg_mae:<9.2f}")
+    
+    """
     # Save fold info for NN to use
     fold_info = {
         'fold_configs': fold_configs,
@@ -495,38 +554,32 @@ def run_preprocessing():
     train_mask = df_hist['date'] <= '2024-12-31'
     val_mask = (df_hist['date'] > '2023-12-31') & (df_hist['date'] <= '2024-12-31')
     test_mask = df_hist['date'] > '2024-12-31'
-
-   
-    print("\n" + "="*60)
-    print("✅ DATA PREPROCESSING COMPLETE!")
-    print("="*60)
-    print(f"\nSummary:")
-    print(f"  - Total options processed: {len(df_hist):,}")
-    print(f"  - Date range: {df_hist['date'].min().date()} to {df_hist['date'].max().date()}")
-    print(f"\nWalk-Forward Validation (5 folds):")
-    print(f"  - Average BS(HV) MAE: ${avg_mae:.2f}")
-    print(f"  - Average BS(HV) MAE (ATM): ${avg_mae_atm:.2f}")
-    print(f"\nBaseline to beat: ${avg_mae:.2f} MAE")
+    """
 
 
     # ==============================================================================
-    # STEP 9: SAVE FINAL DATASETS
+    # STEP 11: SAVE FINAL DATASETS
     # ==============================================================================
 
     print("\n" + "="*60)
-    print("STEP 9: SAVING PROCESSED DATA")
+    print("STEP 11: SAVING PROCESSED DATA")
     print("="*60)
 
-    # Save full dataset with both BS versions
-    df.to_csv(SPX_BS_BOTH_FILE, index=False)
-    print(f"✅ Saved: SPX_with_BS_Both_Vols.csv ({len(df):,} rows)")
-
-    # Save subset with historical volatility
+    # Save subset with historical volatility (main file for ML models)
     df_hist.to_csv(SPX_BS_HIST_FILE, index=False)
     print(f"✅ Saved: SPX_with_BS_Historical.csv ({len(df_hist):,} rows)")
 
     print(f"✅ Saved: {SPX_BS_BOTH_FILE}")
     print(f"✅ Saved: {SPX_BS_HIST_FILE}")
+
+   # Verify all features are present
+    print("\n📊 Features available for ML models:")
+    for feat in FEATURES_BASIC:
+        if feat in df_hist.columns:
+            print(f"   ✓ {feat}")
+        else:
+            print(f"   ✗ {feat} (MISSING!)")
+
 
     print("\n" + "="*60)
     print("✅ DATA PREPROCESSING COMPLETE!")
