@@ -27,6 +27,7 @@ except ImportError:
     XGBOOST_AVAILABLE = False
     print("❌ XGBoost not installed. Run: pip install xgboost")
 
+
 # ============================================================
 # IMPORTS FROM CONFIG
 # ============================================================
@@ -59,6 +60,13 @@ except ImportError:
 for d in [RESULTS_DIR, MODELS_DIR]:
     os.makedirs(d, exist_ok=True)
 
+def load_bs_baseline():
+    """Load BS baseline from preprocessing results."""
+    bs_path = os.path.join(RESULTS_DIR, 'bs_walk_forward_results.csv')
+    if os.path.exists(bs_path):
+        bs_df = pd.read_csv(bs_path)
+        return bs_df['mae'].mean()
+    return None
 
 # ============================================================
 # XGBOOST MODEL
@@ -104,15 +112,31 @@ def get_feature_importance(xgb_model, feature_names):
 
 
 def evaluate_model(y_true, y_pred, set_name="Test"):
-    """Calculate evaluation metrics."""
+    """Calculate evaluation metrics. Bias = mean error."""
+    y_true = np.asarray(y_true, dtype=np.float32)
+    y_pred = np.asarray(y_pred, dtype=np.float32)
+
+    errors = y_pred - y_true
+    abs_errors = np.abs(errors)
+
     return {
         'set': set_name,
-        'mae': mean_absolute_error(y_true, y_pred),
-        'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
-        'median_ae': np.median(np.abs(y_true - y_pred)),
-        'max_error': np.max(np.abs(y_true - y_pred))
+        'mae': float(np.mean(abs_errors)),
+        'rmse': float(np.sqrt(np.mean(errors ** 2))),
+        'median_ae': float(np.median(abs_errors)),
+        'bias': float(np.mean(errors)),
+        'max_error': float(np.max(abs_errors)),
     }
 
+def check_and_clean_array(name, X):
+    """Defensive cleaning for NaNs/Infs."""
+    X = np.asarray(X)
+    n_nan = np.isnan(X).sum()
+    n_inf = np.isinf(X).sum()
+    if n_nan > 0 or n_inf > 0:
+        print(f"  ⚠️ {name}: cleaning NaNs={n_nan} Infs={n_inf}")
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+    return X
 
 # ============================================================
 # WALK-FORWARD VALIDATION
@@ -134,7 +158,7 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
         {'name': 'Fold 2', 'train_end': '2021-12-31', 'test_end': '2022-12-31', 'test_year': '2022'},
         {'name': 'Fold 3', 'train_end': '2022-12-31', 'test_end': '2023-12-31', 'test_year': '2023'},
         {'name': 'Fold 4', 'train_end': '2023-12-31', 'test_end': '2024-12-31', 'test_year': '2024'},
-        {'name': 'Fold 5', 'train_end': '2024-12-31', 'test_end': '2025-12-31', 'test_year': '2025'},
+        {'name': 'Fold 5', 'train_end': '2024-12-31', 'test_end': '2025-08-29', 'test_year': '2025'},
     ]
     
     results = []
@@ -157,7 +181,7 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
         n_train = int(0.85 * n_total)
         
         df_train = df_train_val.iloc[:n_train].copy()
-        df_val = df_train_val.iloc[n_train:].copy()
+        df_val = df_train_val.iloc[n_train:].copy() #last 15 for early stopping
         
         if len(df_test) == 0:
             print(f"⚠️ No test data for {fold['name']}, skipping")
@@ -168,13 +192,22 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
         print(f"Test:  {len(df_test):,} options ({fold['test_year']})")
         
         # Prepare data
-        X_train = df_train[feature_columns].values
-        y_train = df_train[target_col].values
-        X_val = df_val[feature_columns].values
-        y_val = df_val[target_col].values
-        X_test = df_test[feature_columns].values
-        y_test = df_test[target_col].values
-        
+        X_train = df_train[feature_columns].to_numpy(dtype=np.float32)
+        y_train = df_train[target_col].to_numpy(dtype=np.float32)
+
+        X_val = df_val[feature_columns].to_numpy(dtype=np.float32)
+        y_val = df_val[target_col].to_numpy(dtype=np.float32)
+
+        X_test = df_test[feature_columns].to_numpy(dtype=np.float32)
+        y_test = df_test[target_col].to_numpy(dtype=np.float32)
+
+        X_train = check_and_clean_array("X_train", X_train)
+        y_train = check_and_clean_array("y_train", y_train)
+        X_val   = check_and_clean_array("X_val", X_val)
+        y_val   = check_and_clean_array("y_val", y_val)
+        X_test  = check_and_clean_array("X_test", X_test)
+        y_test  = check_and_clean_array("y_test", y_test)
+
         # Train model
         print(f"\n--- Training XGBoost ({fold['name']}) ---")
         start_time = time.perf_counter()
@@ -205,12 +238,30 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
         
         train_metrics = evaluate_model(y_train, train_pred, "Train")
         test_metrics = evaluate_model(y_test, test_pred, "Test")
+
+        # Call vs Put split (Test)
+        type_metrics = {}
+        if 'cp_flag' in df_test.columns:
+            is_call = (df_test['cp_flag'].values == 'C')
+            is_put  = (df_test['cp_flag'].values == 'P')
+
+            if is_call.sum() > 0:
+                type_metrics['call'] = evaluate_model(y_test[is_call], test_pred[is_call], "Test_Call")
+                print(f"\n📌 Call Test MAE: ${type_metrics['call']['mae']:.2f} | Bias: ${type_metrics['call']['bias']:.2f} (n={is_call.sum():,})")
+
+            if is_put.sum() > 0:
+                type_metrics['put'] = evaluate_model(y_test[is_put], test_pred[is_put], "Test_Put")
+                print(f"📌 Put  Test MAE: ${type_metrics['put']['mae']:.2f} | Bias: ${type_metrics['put']['bias']:.2f} (n={is_put.sum():,})")
+
         
-        print(f"\n{'Set':<12} {'MAE':<12} {'RMSE':<12} {'Median AE':<12}")
-        print("-" * 48)
-        print(f"{'Train':<12} ${train_metrics['mae']:<11.2f} ${train_metrics['rmse']:<11.2f} ${train_metrics['median_ae']:<11.2f}")
-        print(f"{'Test':<12} ${test_metrics['mae']:<11.2f} ${test_metrics['rmse']:<11.2f} ${test_metrics['median_ae']:<11.2f}")
-        
+        print(f"\n{'Set':<12} {'MAE':<12} {'RMSE':<12} {'Median AE':<12} {'Bias':<12}")
+        print("-" * 70)
+        print(f"{'Train':<12} ${train_metrics['mae']:<11.2f} ${train_metrics['rmse']:<11.2f} "
+            f"${train_metrics['median_ae']:<11.2f} ${train_metrics['bias']:<11.2f}")
+        print(f"{'Test':<12} ${test_metrics['mae']:<11.2f} ${test_metrics['rmse']:<11.2f} "
+            f"${test_metrics['median_ae']:<11.2f} ${test_metrics['bias']:<11.2f}")
+
+
         # Feature importance
         importance = get_feature_importance(xgb_model, feature_columns)
         importance['fold'] = fold['name']
@@ -230,15 +281,40 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
                     )
                     print(f"   {bucket}: MAE=${bucket_mae:.2f} (n={bucket_mask.sum():,})")
         
+        atm_mask = (df_test['money_bucket'] == 'ATM') if 'money_bucket' in df_test.columns else None
+        if atm_mask is not None and atm_mask.sum() > 0:
+            mae_atm = mean_absolute_error(df_test.loc[atm_mask, target_col].values, test_pred[atm_mask.values])
+        else:
+            mae_atm = np.nan
+
         results.append({
             'fold': fold['name'],
             'test_year': fold['test_year'],
             'train_size': len(df_train),
+            'val_size': len(df_val),
             'test_size': len(df_test),
+
+            # Train metrics
             'train_mae': train_metrics['mae'],
+            'train_rmse': train_metrics['rmse'],
+            'train_median_ae': train_metrics['median_ae'],
+            'train_bias': train_metrics['bias'],
+
+            # Test metrics
             'test_mae': test_metrics['mae'],
-            'test_rmse': test_metrics['rmse']
+            'test_rmse': test_metrics['rmse'],
+            'test_median_ae': test_metrics['median_ae'],
+            'test_bias': test_metrics['bias'],
+
+            # ATM + Type splits
+            'mae_atm': mae_atm,
+            'mae_call': type_metrics['call']['mae'] if 'call' in type_metrics else np.nan,
+            'bias_call': type_metrics['call']['bias'] if 'call' in type_metrics else np.nan,
+            'mae_put': type_metrics['put']['mae'] if 'put' in type_metrics else np.nan,
+            'bias_put': type_metrics['put']['bias'] if 'put' in type_metrics else np.nan,
         })
+
+
     
     # Summary
     results_df = pd.DataFrame(results)
@@ -248,7 +324,8 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
     print("📊 WALK-FORWARD AVERAGE RESULTS (5 FOLDS) - XGBOOST")
     print("="*80)
     
-    bs_baseline = 24.14
+    bs_baseline = load_bs_baseline()
+
     print(f"\n{'Model':<30} {'Avg Test MAE':<15} {'vs BS':<15}")
     print("-" * 60)
     print(f"{'BS (Historical Vol)':<30} ${bs_baseline:<14.2f} Baseline")

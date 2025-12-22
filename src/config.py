@@ -55,8 +55,8 @@ MODEL_FULL_FILE = os.path.join(MODELS_DIR, 'best_NN_Full.pth')
 # ============================================================
 
 FILTER_CONFIG = {
-    'moneyness_min': 0.70,
-    'moneyness_max': 1.30,
+    'moneyness_min': 0.80,
+    'moneyness_max': 1.20,
     'min_volume': 10,
     'min_open_interest': 100,
     'min_impl_vol': 0.05,

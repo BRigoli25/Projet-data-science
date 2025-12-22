@@ -73,7 +73,7 @@ def check_data_files():
     missing = [f for f in required_files if not os.path.exists(f)]
     
     if missing:
-        print("\n⚠️  ERROR: Missing required data files!")
+        print("\n⚠️  Missing required data files for preprocessing!")
         print("\nPlease place the following files in data/raw/:")
         for f in missing:
             print(f"  - {os.path.basename(f)}")
@@ -86,48 +86,69 @@ def check_data_files():
 # PIPELINE STEPS
 # ============================================================
 
-def run_step(step_name: str):
-    def decorator(func: Callable[[], None]):
-        def wrapper() -> bool:
-            print_header(step_name)
-            try:
-                func()
-                return True
-            except Exception as e:
-                print(f"❌ {step_name} error: {e}")
-                traceback.print_exc()
-                return False
-        return wrapper
-    return decorator
-
-@run_step("STEP 1: DATA PREPROCESSING & BLACK-SCHOLES BASELINE")
 def step_preprocessing():
-    from src.data_preprocessing import run_preprocessing
-    run_preprocessing()
+    """Run data preprocessing and BS baseline."""
+    print_header("STEP 1: DATA PREPROCESSING & BLACK-SCHOLES BASELINE")
+    try:
+        from src.data_preprocessing import run_preprocessing
+        run_preprocessing()
+        return True
+    except Exception as e:
+        print(f"❌ Preprocessing error: {e}")
+        traceback.print_exc()
+        return False
 
 
-@run_step("STEP 2: NEURAL NETWORK TRAINING")
 def step_neural_network():
-    from src.neural_network import run_training
-    run_training()
+    """Run neural network training."""
+    print_header("STEP 2: NEURAL NETWORK TRAINING")
+    try:
+        from src.neural_network import run_training
+        run_training()
+        return True
+    except Exception as e:
+        print(f"❌ Neural Network error: {e}")
+        traceback.print_exc()
+        return False
 
 
-@run_step("STEP 3: RANDOM FOREST TRAINING")
 def step_random_forest():
-    from src.random_forest import run_training
-    run_training()
+    """Run random forest training."""
+    print_header("STEP 3: RANDOM FOREST TRAINING")
+    try:
+        from src.random_forest import run_training
+        run_training()
+        return True
+    except Exception as e:
+        print(f"❌ Random Forest error: {e}")
+        traceback.print_exc()
+        return False
 
 
-@run_step("STEP 4: XGBOOST TRAINING")
 def step_xgboost():
-    from src.xg_boost import run_training
-    run_training()
+    """Run XGBoost training."""
+    print_header("STEP 4: XGBOOST TRAINING")
+    try:
+        from src.xg_boost import run_training
+        run_training()
+        return True
+    except Exception as e:
+        print(f"❌ XGBoost error: {e}")
+        traceback.print_exc()
+        return False
 
 
-@run_step("STEP 5: GENERATING VISUALIZATIONS")
 def step_visualizations():
-    from src.visualizations import generate_all_plots
-    generate_all_plots()
+    """Generate all visualizations."""
+    print_header("STEP 5: GENERATING VISUALIZATIONS")
+    try:
+        from src.visualizations import generate_all_plots
+        generate_all_plots()
+        return True
+    except Exception as e:
+        print(f"❌ Visualizations error: {e}")
+        traceback.print_exc()
+        return False
 
 
 # ============================================================
@@ -191,14 +212,21 @@ def step_runtime_comparison():
     # --------------------------------------------------------
     print("\n📊 Timing Black-Scholes...")
     
-    def black_scholes_vectorized(S, K, T, r, sigma, is_call):
+    def black_scholes_vectorized(F, K, T, r, sigma, option_type='C'):
         T = np.maximum(T, 1e-10)
-        d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+        
+        d1 = (np.log(F / K) + 0.5 * sigma**2 * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
-        call_price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-        put_price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
-        return np.where(is_call, call_price, put_price)
-    
+        
+        disc = np.exp(-r * T)
+        call_price = disc * (F * norm.cdf(d1) - K * norm.cdf(d2))
+        put_price = disc * (K * norm.cdf(-d2) - F * norm.cdf(-d1))
+        
+        is_call = (option_type == 'C')
+        price = np.where(is_call, call_price, put_price)
+        
+        return price
+
     bs_times = []
     for _ in range(N_RUNS):
         start = time.perf_counter()
@@ -278,34 +306,17 @@ def step_runtime_comparison():
     # --------------------------------------------------------
     # 4. Neural Network
     # --------------------------------------------------------
-    nn_path = os.path.join(MODELS_DIR, 'best_NN_Basic_Fold5.pth')
+    nn_path = os.path.join(MODELS_DIR, 'best_NN_Basic_Fold5_FINAL.pth')
     if os.path.exists(nn_path) and TORCH_AVAILABLE:
         print("\n📊 Timing Neural Network...")
         
         from sklearn.preprocessing import StandardScaler
+        from src.neural_network import OptionPricingMLP
         
         # Scale features (NN requires scaling)
         scaler_X = StandardScaler()
         X_test_scaled = scaler_X.fit_transform(X_test)
         X_test_tensor = torch.FloatTensor(X_test_scaled)
-        
-        # Define model architecture (must match training)
-        class OptionPricingMLP(torch.nn.Module):
-            def __init__(self, input_size, hidden_sizes=[128, 64, 32], dropout_rate=0.2):
-                super(OptionPricingMLP, self).__init__()
-                layers = []
-                prev_size = input_size
-                for hidden_size in hidden_sizes:
-                    layers.append(torch.nn.Linear(prev_size, hidden_size))
-                    layers.append(torch.nn.BatchNorm1d(hidden_size))
-                    layers.append(torch.nn.ReLU())
-                    layers.append(torch.nn.Dropout(dropout_rate))
-                    prev_size = hidden_size
-                layers.append(torch.nn.Linear(prev_size, 1))
-                self.network = torch.nn.Sequential(*layers)
-            
-            def forward(self, x):
-                return self.network(x)
         
         nn_model = OptionPricingMLP(input_size=len(FEATURES_BASIC))
         nn_model.load_state_dict(torch.load(nn_path, map_location='cpu'))
@@ -355,7 +366,7 @@ def step_runtime_comparison():
             print(f"{row['Model']:<18} {row['Type']:<20} "
                   f"{row['Avg Time (s)']:.4f}       {row['Options/sec']:>12,.0f}")
         
-        #save results
+        # Save results
         results_df.to_csv(os.path.join(RESULTS_DIR, 'runtime_comparison.csv'), index=False)
         print(f"\n✅ Saved: {os.path.join(RESULTS_DIR, 'runtime_comparison.csv')}")
         
@@ -370,7 +381,7 @@ def step_runtime_comparison():
 # ============================================================
 
 def run_full_pipeline():
-    """Run the complete thesis pipeline."""
+    """Run the complete project pipeline."""
     
     print("\n" + "█" * 70)
     print("█" + " " * 68 + "█")
@@ -382,14 +393,36 @@ def run_full_pipeline():
     print(f"\n📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"📂 Project: {PROJECT_ROOT}")
     
-    if not check_data_files():
-        return
-    
     total_start = time.time()
     results = {}
     
+    # ============================================================
+    # STEP 1: PREPROCESSING (conditional on raw data availability)
+    # ============================================================
+    if CONFIG_LOADED and check_data_files():
+        step_start = time.time()
+        success = step_preprocessing()
+        elapsed = time.time() - step_start
+        results["Preprocessing"] = {'success': success, 'time': elapsed}
+        if success:
+            print(f"\n✅ Preprocessing completed in {elapsed:.1f}s")
+        else:
+            print(f"\n⚠️ Preprocessing had issues")
+    else:
+        # Check if preprocessed data exists
+        if os.path.exists(os.path.join(RESULTS_DIR, 'SPX_with_BS_Historical.csv')):
+            print("\n⚠️ Raw data not found, but preprocessed data exists.")
+            print("   Skipping preprocessing and using existing results.")
+            results["Preprocessing"] = {'success': True, 'time': 0}
+        else:
+            print("\n❌ Raw data not found AND no preprocessed data exists.")
+            print("   Cannot continue. Please provide data files.")
+            return
+    
+    # ============================================================
+    # STEPS 2-6: Model Training, Runtime, Visualizations
+    # ============================================================
     steps = [
-        ("Preprocessing", step_preprocessing),
         ("Neural Network", step_neural_network),
         ("Random Forest", step_random_forest),
         ("XGBoost", step_xgboost),
@@ -397,9 +430,9 @@ def run_full_pipeline():
         ("Visualizations", step_visualizations),
     ]
     
-    for i, (name, func) in enumerate(steps, 1):
+    for i, (name, func) in enumerate(steps, 2):
         print(f"\n{'━' * 70}")
-        print(f"  [{i}/{len(steps)}] {name}")
+        print(f"  [{i}/{len(steps)+1}] {name}")
         print(f"{'━' * 70}")
         
         step_start = time.time()
@@ -411,13 +444,16 @@ def run_full_pipeline():
             if success:
                 print(f"\n✅ {name} completed in {elapsed:.1f}s")
             else:
-                print(f"\n⚠️  {name} had issues")
+                print(f"\n⚠️ {name} had issues")
         except Exception as e:
             elapsed = time.time() - step_start
             results[name] = {'success': False, 'time': elapsed}
             print(f"\n❌ {name} failed: {e}")
+            traceback.print_exc()
     
-    # Final summary
+    # ============================================================
+    # FINAL SUMMARY
+    # ============================================================
     total_time = time.time() - total_start
     
     print("\n" + "█" * 70)
@@ -452,7 +488,7 @@ def main():
     """Main entry point."""
     
     parser = argparse.ArgumentParser(
-        description='SPX Option Pricing Thesis Pipeline',
+        description='SPX Option Pricing Project Pipeline',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

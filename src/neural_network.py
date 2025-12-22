@@ -22,6 +22,47 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.preprocessing import StandardScaler
 import time
 
+def load_bs_baseline():
+    """Load BS baseline from preprocessing results."""
+    bs_path = os.path.join(RESULTS_DIR, 'bs_walk_forward_results.csv')
+    if os.path.exists(bs_path):
+        bs_df = pd.read_csv(bs_path)
+        return bs_df['mae'].mean()
+    else:
+        print("⚠️ BS results not found, using fallback")
+        return None  # Will skip comparison if not found
+
+# ============================================================
+# MODEL DEFINITION
+# ============================================================
+
+class OptionPricingMLP(nn.Module):
+    def __init__(self, input_size, hidden_sizes=[128, 64, 32], dropout_rate=0.3):
+        super(OptionPricingMLP, self).__init__()
+        
+        layers = []
+        prev_size = input_size
+        
+        for i, hidden_size in enumerate(hidden_sizes):
+            layers.append(nn.Linear(prev_size, hidden_size))
+            layers.append(nn.BatchNorm1d(hidden_size))
+            layers.append(nn.LeakyReLU(0.1))
+            layers.append(nn.Dropout(dropout_rate))
+            prev_size = hidden_size
+        
+        layers.append(nn.Linear(prev_size, 1))
+        self.network = nn.Sequential(*layers)
+        
+        # He initialization
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        return self.network(x)
+
 
 def run_training():
     """Main training function called by main.py"""
@@ -92,42 +133,11 @@ def run_training():
     print(f"Date range: {df_clean['date'].min().date()} to {df_clean['date'].max().date()}")
 
     # ============================================================
-    # MODEL DEFINITION
-    # ============================================================
-
-    class OptionPricingMLP(nn.Module):
-        def __init__(self, input_size, hidden_sizes=[128, 64, 32], dropout_rate=0.3):
-            super(OptionPricingMLP, self).__init__()
-            
-            layers = []
-            prev_size = input_size
-            
-            for i, hidden_size in enumerate(hidden_sizes):
-                layers.append(nn.Linear(prev_size, hidden_size))
-                layers.append(nn.BatchNorm1d(hidden_size))
-                layers.append(nn.LeakyReLU(0.1))
-                layers.append(nn.Dropout(dropout_rate))
-                prev_size = hidden_size
-            
-            layers.append(nn.Linear(prev_size, 1))
-            self.network = nn.Sequential(*layers)
-            
-            # He initialization
-            for m in self.modules():
-                if isinstance(m, nn.Linear):
-                    nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                    if m.bias is not None:
-                        nn.init.constant_(m.bias, 0)
-        
-        def forward(self, x):
-            return self.network(x)
-
-    # ============================================================
     # TRAINING FUNCTION
     # ============================================================
 
     def train_model(feature_columns, model_name, df_train, df_val, df_test, num_epochs=300, batch_size=4096, 
-                    learning_rate=0.001, patience=60):
+                    learning_rate=0.001, patience=60, early_stopping=True, fixed_epochs=None):
         """
         Train a neural network model for option pricing
         
@@ -156,92 +166,127 @@ def run_training():
         print("="*60)
         print(f"Features: {len(feature_columns)}")
         
-        # Prepare data
-        X_train = df_train[feature_columns].values
-        y_train = df_train['mid_price'].values
-
-        X_val = df_val[feature_columns].values
-        y_val = df_val['mid_price'].values
-
-        X_test = df_test[feature_columns].values
-        y_test = df_test['mid_price'].values
             
-        # Check for nan values
-        def check_and_clean(X):
-            if np.isnan(X).sum() > 0 or np.isinf(X).sum() > 0:
-                print(f"  ⚠️  Cleaning {np.isnan(X).sum()} NaNs and {np.isinf(X).sum()} Infs")
+        # ----------------------------
+        # Prepare data
+        # ----------------------------
+        X_train = df_train[feature_columns].to_numpy(dtype=np.float32)
+        y_train = df_train['mid_price'].to_numpy(dtype=np.float32)
+
+        X_val = df_val[feature_columns].to_numpy(dtype=np.float32) if df_val is not None else None
+        y_val = df_val['mid_price'].to_numpy(dtype=np.float32) if df_val is not None else None
+
+        X_test = df_test[feature_columns].to_numpy(dtype=np.float32)
+        y_test = df_test['mid_price'].to_numpy(dtype=np.float32)
+
+        def check_X(name, X):
+            if X is None:
+                return None
+            n_nan = np.isnan(X).sum()
+            n_inf = np.isinf(X).sum()
+            if n_nan > 0 or n_inf > 0:
+                print(f"  ⚠️ {name}: cleaning NaNs={n_nan} Infs={n_inf}")
                 X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
             return X
-        
-        X_train = check_and_clean(X_train)
-        X_val = check_and_clean(X_val)
-        X_test = check_and_clean(X_test)
-        
-        # Scaling
+
+        def check_y(name, y):
+            n_nan = np.isnan(y).sum()
+            n_inf = np.isinf(y).sum()
+            if n_nan > 0 or n_inf > 0:
+                print(f"  ⚠️ {name}: cleaning NaNs={n_nan} Infs={n_inf}")
+                y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+            return y
+
+        X_train = check_X("X_train", X_train)
+        X_val = check_X("X_val", X_val)
+        X_test = check_X("X_test", X_test)
+
+        y_train = check_y("y_train", y_train)
+        if y_val is not None:
+            y_val = check_y("y_val", y_val)
+        y_test = check_y("y_test", y_test)
+
+        # ----------------------------
+        # Scaling (fit only on TRAIN)
+        # ----------------------------
         scaler_X = StandardScaler()
         scaler_y = StandardScaler()
-        
+
         X_train_scaled = scaler_X.fit_transform(X_train)
-        X_val_scaled = scaler_X.transform(X_val)
         X_test_scaled = scaler_X.transform(X_test)
-        
+
         y_train_scaled = scaler_y.fit_transform(y_train.reshape(-1, 1)).flatten()
-        y_val_scaled = scaler_y.transform(y_val.reshape(-1, 1)).flatten()
-        
+
+        if X_val is not None:
+            X_val_scaled = scaler_X.transform(X_val)
+            y_val_scaled = scaler_y.transform(y_val.reshape(-1, 1)).flatten()
+        else:
+            X_val_scaled, y_val_scaled = None, None
+
         print("✅ Data prepared and scaled")
-        
+
+        # ----------------------------
         # Model setup
+        # ----------------------------
         np.random.seed(42)
         torch.manual_seed(42)
-        
+
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Device: {device}")
-        
+
         input_size = len(feature_columns)
         mlp_model = OptionPricingMLP(
             input_size=input_size,
             hidden_sizes=[128, 64, 32],
             dropout_rate=0.3
         ).to(device)
-        
+
         total_params = sum(p.numel() for p in mlp_model.parameters())
         print(f"Model parameters: {total_params:,}")
-        
-        # Training setup
+
         criterion = nn.MSELoss()
         optimizer = optim.AdamW(mlp_model.parameters(), lr=learning_rate, weight_decay=1e-5)
+
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=10
         )
-        
-        # Convert to tensors
+
+        # Tensors
         X_train_tensor = torch.FloatTensor(X_train_scaled).to(device)
         y_train_tensor = torch.FloatTensor(y_train_scaled).reshape(-1, 1).to(device)
-        X_val_tensor = torch.FloatTensor(X_val_scaled).to(device)
-        y_val_tensor = torch.FloatTensor(y_val_scaled).reshape(-1, 1).to(device)
+
         X_test_tensor = torch.FloatTensor(X_test_scaled).to(device)
-        
+
+        if X_val_scaled is not None:
+            X_val_tensor = torch.FloatTensor(X_val_scaled).to(device)
+            y_val_tensor = torch.FloatTensor(y_val_scaled).reshape(-1, 1).to(device)
+        else:
+            X_val_tensor, y_val_tensor = None, None
+
         train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        
-        # Training loop
-        best_val_loss = float('inf')
-        patience_counter = 0
-        
-        train_losses = []
-        val_losses = []
-        
-        print(f"\nTraining for max {num_epochs} epochs...")
-        print(f"Batch size: {batch_size}, Learning rate: {learning_rate}, Patience: {patience}")
-        
 
-        start_time = time.perf_counter() # starting point to measure training time
+        # ----------------------------
+        # Training loop
+        # ----------------------------
+        if fixed_epochs is not None:
+            num_epochs = int(fixed_epochs)
+            early_stopping = False
+
+        best_val_loss = float('inf')
+        best_epoch = None
+        patience_counter = 0
+        train_losses, val_losses = [], []
+
+        print(f"\nTraining for max {num_epochs} epochs...")
+        print(f"Batch size: {batch_size}, LR: {learning_rate}, EarlyStopping: {early_stopping}, Patience: {patience}")
+
+        start_time = time.perf_counter()
 
         for epoch in range(num_epochs):
-            # Training phase
             mlp_model.train()
             train_loss = 0.0
-            
+
             for batch_X, batch_y in train_loader:
                 optimizer.zero_grad()
                 outputs = mlp_model(batch_X)
@@ -250,63 +295,68 @@ def run_training():
                 torch.nn.utils.clip_grad_norm_(mlp_model.parameters(), max_norm=1.0)
                 optimizer.step()
                 train_loss += loss.item() * batch_X.size(0)
-            
+
             train_loss /= len(train_loader.dataset)
             train_losses.append(train_loss)
-            
-            # Validation phase
+
+            # If no validation (retrain pass), we can skip val computation
+            if X_val_tensor is None:
+                if (epoch + 1) % 20 == 0 or epoch == 0:
+                    print(f"Epoch [{epoch+1:3d}/{num_epochs}] Train Loss: {train_loss:.6f}")
+                continue
+
+            # Validation
             mlp_model.eval()
             with torch.no_grad():
                 val_outputs = mlp_model(X_val_tensor)
                 val_loss = criterion(val_outputs, y_val_tensor).item()
                 val_losses.append(val_loss)
-            
-            # Learning rate scheduling
+
             scheduler.step(val_loss)
-            
-            # Print progress
+
             if (epoch + 1) % 20 == 0 or epoch == 0:
-                print(f"Epoch [{epoch+1:3d}/{num_epochs}] "
-                    f"Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}")
-            
-            # Early stopping
+                print(f"Epoch [{epoch+1:3d}/{num_epochs}] Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}")
+
+            # Early stopping / best checkpointing
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+                best_epoch = epoch + 1  # 1-indexed
                 patience_counter = 0
-                # Save best model state
+
                 model_path = os.path.join(MODELS_DIR, f'best_{model_name}.pth')
                 torch.save(mlp_model.state_dict(), model_path)
-                print(f"✅ Model saved: {model_path}")
             else:
                 patience_counter += 1
-                if patience_counter >= patience:
-                    print(f"\n⚠️  Early stopping triggered at epoch {epoch+1}")
+                if early_stopping and patience_counter >= patience:
+                    print(f"\n⚠️ Early stopping at epoch {epoch+1}")
                     break
-        # End of training time 
+
         total_time = time.perf_counter() - start_time
-        print(f"\n⏱️ Training time for {model_name}: {total_time:.1f} seconds "
-        f"({total_time/60:.1f} minutes)")
-        # Save time to csv
+        print(f"\n⏱️ Training time for {model_name}: {total_time:.1f}s ({total_time/60:.1f} min)")
+
+        # Save runtime
         runtime_path = os.path.join(RESULTS_DIR, "training_times.csv")
         header = ["model_name", "n_train", "n_val", "n_test", "seconds"]
-        row = [model_name, len(df_train), len(df_val), len(df_test), total_time]
-
+        row = [model_name, len(df_train), (len(df_val) if df_val is not None else 0), len(df_test), total_time]
         file_exists = os.path.exists(runtime_path)
         with open(runtime_path, "a", newline="") as f:
             writer = csv.writer(f)
             if not file_exists:
                 writer.writerow(header)
             writer.writerow(row)
-        
-        # Load best model from saved file
+
+        # If we used validation, load best checkpoint. If no val, keep last epoch weights.
         model_path = os.path.join(MODELS_DIR, f'best_{model_name}.pth')
-        mlp_model.load_state_dict(torch.load(model_path))
-                
-        print(f"\n✅ Training completed")
-        print(f"Best validation loss: {best_val_loss:.6f}")
-        print(f"Total epochs: {len(train_losses)}")
-        
-        # Return everything needed for evaluation
+        if X_val_tensor is not None and os.path.exists(model_path):
+            mlp_model.load_state_dict(torch.load(model_path, map_location=device))
+
+        print("\n✅ Training completed")
+        if X_val_tensor is not None:
+            print(f"Best val loss: {best_val_loss:.6f} at epoch {best_epoch}")
+        else:
+            best_epoch = num_epochs  # retrain pass
+            best_val_loss = None
+
         return {
             'model': mlp_model,
             'model_name': model_name,
@@ -315,9 +365,9 @@ def run_training():
             'train_losses': train_losses,
             'val_losses': val_losses,
             'best_val_loss': best_val_loss,
+            'best_epoch': best_epoch,
             'feature_columns': feature_columns,
             'device': device,
-            # Tensors for evaluation
             'X_train_tensor': X_train_tensor,
             'X_val_tensor': X_val_tensor,
             'X_test_tensor': X_test_tensor,
@@ -330,7 +380,7 @@ def run_training():
     # EVALUATION FUNCTION
     # ============================================================
 
-    def evaluate_model(trained_model_dict):
+    def evaluate_model(trained_model_dict, df_test_fold=None):
         """
         Evaluate a trained model and return comprehensive metrics
         
@@ -343,7 +393,7 @@ def run_training():
         --------
         dict : Dictionary containing predictions and metrics
         """
-        
+            
         print("\n" + "="*60)
         print(f"EVALUATING: {trained_model_dict['model_name']}")
         print("="*60)
@@ -352,56 +402,101 @@ def run_training():
         scaler_y = trained_model_dict['scaler_y']
         model_name = trained_model_dict['model_name']
         
-        # Get tensors
+        # Get tensors (may be None for val)
         X_train_tensor = trained_model_dict['X_train_tensor']
-        X_val_tensor = trained_model_dict['X_val_tensor']
+        X_val_tensor = trained_model_dict.get('X_val_tensor')  # May be None
         X_test_tensor = trained_model_dict['X_test_tensor']
         
         y_train = trained_model_dict['y_train']
-        y_val = trained_model_dict['y_val']
+        y_val = trained_model_dict.get('y_val')  # May be None
         y_test = trained_model_dict['y_test']
         
-        # Generate predictions
-        model.eval()
-        with torch.no_grad():
-            y_train_scaled = model(X_train_tensor).cpu().numpy().flatten()
-            y_val_scaled = model(X_val_tensor).cpu().numpy().flatten()
-            y_test_scaled = model(X_test_tensor).cpu().numpy().flatten()
-        
-        # Inverse transform to dollar prices
-        y_train_pred = scaler_y.inverse_transform(y_train_scaled.reshape(-1, 1)).flatten()
-        y_val_pred = scaler_y.inverse_transform(y_val_scaled.reshape(-1, 1)).flatten()
-        y_test_pred = scaler_y.inverse_transform(y_test_scaled.reshape(-1, 1)).flatten()
-        
-        # Calculate metrics
+        # Calculate metrics helper
         def calculate_metrics(y_true, y_pred):
             errors = y_pred - y_true
             abs_errors = np.abs(errors)
-            
             return {
                 'mae': np.mean(abs_errors),
                 'rmse': np.sqrt(np.mean(errors ** 2)),
                 'median_ae': np.median(abs_errors),
+                "bias": float(np.mean(errors)), 
                 'max_error': np.max(abs_errors),
                 'std_error': np.std(errors),
                 'mean_error': np.mean(errors),
             }
         
-        train_metrics = calculate_metrics(y_train, y_train_pred)
-        val_metrics = calculate_metrics(y_val, y_val_pred)
-        test_metrics = calculate_metrics(y_test, y_test_pred)
+        # Generate predictions
+        model.eval()
+        with torch.no_grad():
+            # Train predictions
+            y_train_scaled = model(X_train_tensor).cpu().numpy().flatten()
+            y_train_pred = scaler_y.inverse_transform(y_train_scaled.reshape(-1, 1)).flatten()
+            train_metrics = calculate_metrics(y_train, y_train_pred)
+            
+            # Val predictions (only if validation data exists)
+            if X_val_tensor is not None and y_val is not None:
+                y_val_scaled = model(X_val_tensor).cpu().numpy().flatten()
+                y_val_pred = scaler_y.inverse_transform(y_val_scaled.reshape(-1, 1)).flatten()
+                val_metrics = calculate_metrics(y_val, y_val_pred)
+            else:
+                y_val_pred = None
+                val_metrics = None
+            
+            # Test predictions
+            y_test_scaled = model(X_test_tensor).cpu().numpy().flatten()
+            y_test_pred = scaler_y.inverse_transform(y_test_scaled.reshape(-1, 1)).flatten()
+            test_metrics = calculate_metrics(y_test, y_test_pred)
+
+        type_metrics = None
+        if df_test_fold is not None and 'cp_flag' in df_test_fold.columns:
+            type_metrics = {}
+
+            # Ensure alignment (df_test_fold corresponds to y_test/y_test_pred)
+            is_call_mask = (df_test_fold['cp_flag'].values == 'C')
+            is_put_mask  = (df_test_fold['cp_flag'].values == 'P')
+
+            if is_call_mask.sum() > 0:
+                type_metrics['call'] = calculate_metrics(y_test[is_call_mask], y_test_pred[is_call_mask])
+
+            if is_put_mask.sum() > 0:
+                type_metrics['put'] = calculate_metrics(y_test[is_put_mask], y_test_pred[is_put_mask])
+
+            if 'call' in type_metrics:
+                print(f"\n📌 Call Test MAE: ${type_metrics['call']['mae']:.2f} (n={is_call_mask.sum():,})")
+            if 'put' in type_metrics:
+                print(f"📌 Put  Test MAE: ${type_metrics['put']['mae']:.2f} (n={is_put_mask.sum():,})")
+
+        
+        # ATM metrics
+        atm_metrics = None
+        if df_test_fold is not None and 'moneyness' in df_test_fold.columns:
+            atm_mask = (df_test_fold['moneyness'] >= 0.95) & (df_test_fold['moneyness'] <= 1.05)
+            if atm_mask.sum() > 0:
+                y_test_atm = y_test[atm_mask.values]
+                y_pred_atm = y_test_pred[atm_mask.values]
+                atm_metrics = calculate_metrics(y_test_atm, y_pred_atm)
+                print(f"\n📊 ATM Performance (0.95 ≤ M ≤ 1.05):")
+                print(f"   MAE: ${atm_metrics['mae']:.2f} (n={atm_mask.sum():,})")
         
         # Print results
-        print(f"\n{'Set':<12} {'MAE':<12} {'RMSE':<12} {'Median AE':<12} {'Max Error':<12}")
-        print("-" * 60)
+        # Print results (includes Bias = mean_error)
+        print(f"\n{'Set':<12} {'MAE':<12} {'RMSE':<12} {'Median AE':<12} {'Bias':<12}")
+        print("-" * 70)
+
         print(f"{'Train':<12} ${train_metrics['mae']:<11.2f} ${train_metrics['rmse']:<11.2f} "
-            f"${train_metrics['median_ae']:<11.2f} ${train_metrics['max_error']:<11.2f}")
-        print(f"{'Validation':<12} ${val_metrics['mae']:<11.2f} ${val_metrics['rmse']:<11.2f} "
-            f"${val_metrics['median_ae']:<11.2f} ${val_metrics['max_error']:<11.2f}")
+            f"${train_metrics['median_ae']:<11.2f} ${train_metrics['mean_error']:<11.2f}")
+
+        if val_metrics is not None:
+            print(f"{'Validation':<12} ${val_metrics['mae']:<11.2f} ${val_metrics['rmse']:<11.2f} "
+                f"${val_metrics['median_ae']:<11.2f} ${val_metrics['mean_error']:<11.2f}")
+        else:
+            print(f"{'Validation':<12} {'N/A':<11} {'N/A':<11} {'N/A':<11} {'N/A':<11}")
+
         print(f"{'Test':<12} ${test_metrics['mae']:<11.2f} ${test_metrics['rmse']:<11.2f} "
-            f"${test_metrics['median_ae']:<11.2f} ${test_metrics['max_error']:<11.2f}")
-        
+            f"${test_metrics['median_ae']:<11.2f} ${test_metrics['mean_error']:<11.2f}")
+
         print(f"\n✅ Evaluation completed for {model_name}")
+
         
         return {
             'model_name': model_name,
@@ -414,7 +509,9 @@ def run_training():
                 'train': train_metrics,
                 'val': val_metrics,
                 'test': test_metrics,
+                'type_metrics': type_metrics,
             },
+            'atm_metrics': atm_metrics,
             'train_losses': trained_model_dict['train_losses'],
             'val_losses': trained_model_dict['val_losses'],
             'feature_columns': trained_model_dict['feature_columns'],
@@ -424,9 +521,6 @@ def run_training():
     # WALK-FORWARD TRAINING
     # ============================================================
 
-    print("\n" + "="*80)
-    print("WALK-FORWARD TRAINING (5 FOLDS)")
-    print("="*80)
 
     if WALK_FORWARD:
         print("\n" + "="*80)
@@ -441,18 +535,19 @@ def run_training():
             print(f"FOLD {fold_idx+1}/5: {fold_config['name']}")
             print(f"{'='*80}")
             
-            # Use ALL data up to train_end (like Random Forest)
+            
             train_mask = df_clean['date'] <= fold_config['train_end']
             test_mask = (df_clean['date'] > fold_config['train_end']) & (df_clean['date'] <= fold_config['test_end'])
-            
-            df_train_fold = df_clean[train_mask].copy()  # ALL training data
+                        
+            df_train_val = df_clean[train_mask].copy()
             df_test_fold = df_clean[test_mask].copy()
-            
-            # Use last 15% of training data for validation (early stopping only)
-            n_total = len(df_train_fold)
-            n_val_start = int(0.85 * n_total)
-            df_val_fold = df_train_fold.iloc[n_val_start:].copy()
-            
+
+            # Split into train (85%) and val (15%) - SEPARATE
+            n_total = len(df_train_val)
+            n_train = int(0.85 * n_total)
+            df_train_fold = df_train_val.iloc[:n_train].copy()  # First 85%
+            df_val_fold = df_train_val.iloc[n_train:].copy()    # Last 15%
+
             print(f"\nTrain: {len(df_train_fold):,} options (up to {fold_config['train_end']})")
             print(f"Val:   {len(df_val_fold):,} options (last 15%, for early stopping)")
             print(f"Test:  {len(df_test_fold):,} options ({fold_config['test_end'][:4]})")
@@ -461,28 +556,76 @@ def run_training():
                 print(f"⚠️  Insufficient test data, skipping fold")
                 continue
             
-            # Train Basic model
-            print(f"\n--- Training Basic Model (Fold {fold_idx+1}) ---")
-            trained_basic = train_model(
+            print(f"\n--- Pass A (Selection) Fold {fold_idx+1} ---")
+            trained_sel = train_model(
                 feature_columns=features_basic,
-                model_name=f"NN_Basic_Fold{fold_idx+1}",
+                model_name=f"NN_Basic_Fold{fold_idx+1}_SEL",
                 df_train=df_train_fold,
                 df_val=df_val_fold,
                 df_test=df_test_fold,
                 num_epochs=300,
                 batch_size=2048,
                 learning_rate=0.001,
-                patience=60
+                patience=60,
+                early_stopping=True
             )
-            results_basic = evaluate_model(trained_basic)
+
+            best_epoch = trained_sel["best_epoch"]
+            print(f"🏁 Selected best_epoch={best_epoch} using validation (Fold {fold_idx+1})")
+
+            # ----------------------------
+            # Pass B: final retrain (train on ALL data up to train_end, no validation)
+            # ----------------------------
+            print(f"\n--- Pass B (Final Retrain) Fold {fold_idx+1} ---")
+            trained_final = train_model(
+                feature_columns=features_basic,
+                model_name=f"NN_Basic_Fold{fold_idx+1}_FINAL",
+                df_train=df_train_val,    # ALL data up to train_end
+                df_val=None,              # no validation in this pass
+                df_test=df_test_fold,
+                batch_size=2048,
+                learning_rate=0.001,
+                fixed_epochs=best_epoch   # train exactly best epoch length
+            )
+
+            results_basic = evaluate_model(trained_final, df_test_fold=df_test_fold)
             
+            train_metrics = results_basic["metrics"]["train"]
+            test_metrics  = results_basic["metrics"]["test"]
+
+            type_metrics = results_basic["metrics"].get("type_metrics") or {}
+            call_metrics = type_metrics.get("call", {})
+            put_metrics  = type_metrics.get("put", {})
+
+            mae_atm = results_basic["atm_metrics"]["mae"] if results_basic.get("atm_metrics") else np.nan
+
             all_fold_results_basic.append({
-                'fold': fold_config['name'],
-                'test_year': fold_config['test_end'][:4],
-                'mae': results_basic['metrics']['test']['mae'],
-                'rmse': results_basic['metrics']['test']['rmse'],
+                "fold": fold_config["name"],
+                "test_year": fold_config["test_end"][:4],
+                "train_size": len(df_train_val),     # final retrain uses ALL data up to train_end
+                "test_size": len(df_test_fold),
+
+                # Train metrics
+                "train_mae": train_metrics["mae"],
+                "train_rmse": train_metrics["rmse"],
+                "train_median_ae": train_metrics["median_ae"],
+                "train_bias": train_metrics["bias"],
+
+                # Test metrics
+                "test_mae": test_metrics["mae"],
+                "test_rmse": test_metrics["rmse"],
+                "test_median_ae": test_metrics["median_ae"],
+                "test_bias": test_metrics["bias"],
+
+                # ATM + Type splits
+                "mae_atm": mae_atm,
+                "mae_call": call_metrics.get("mae", np.nan),
+                "bias_call": call_metrics.get("bias", np.nan),
+                "mae_put": put_metrics.get("mae", np.nan),
+                "bias_put": put_metrics.get("bias", np.nan),
             })
-    
+
+                        
 
         # ==============================================================================
         # SUMMARY
@@ -492,26 +635,18 @@ def run_training():
         print("📊 WALK-FORWARD AVERAGE RESULTS (5 FOLDS)")
         print("="*80)
             
-        avg_mae_basic = np.mean([r['mae'] for r in all_fold_results_basic])
-        #avg_mae_full = np.mean([r['mae'] for r in all_fold_results_full])
-        
-        bs_baseline = 24.14  # From preprocessing
+        avg_mae_basic = np.mean([r['test_mae'] for r in all_fold_results_basic])        #avg_mae_full = np.mean([r['mae'] for r in all_fold_results_full])
+        for r in all_fold_results_basic:
+            mae_atm_str = f"${r['mae_atm']:.2f}" if not np.isnan(r['mae_atm']) else "N/A"
+            print(f"{r['fold']:<12} {r['test_year']:<12} ${r['test_mae']:<11.2f} ${r['test_rmse']:<11.2f} {mae_atm_str:<11}")
+
+        bs_baseline = load_bs_baseline()
         
         print(f"\n{'Model':<30} {'Avg Test MAE':<15} {'vs BS':<15}")
         print("-" * 60)
         print(f"{'BS (Historical Vol)':<30} ${bs_baseline:<14.2f} Baseline")
         print(f"{'NN (Basic + Hist Vol)':<30} ${avg_mae_basic:<14.2f} {(bs_baseline-avg_mae_basic)/bs_baseline*100:+.1f}%")
         #print(f"{'NN (Full + IV + Greeks)':<30} ${avg_mae_full:<14.2f} {(bs_baseline-avg_mae_full)/bs_baseline*100:+.1f}%")
-        
-        print(f"\n📊 Fold-by-Fold Comparison:")
-        print(f"\n{'Fold':<12} {'Test Year':<12} {'BS MAE':<12} {'Basic MAE':<12} {'Full MAE':<12}")
-        print("-" * 60)
-        
-        for r in all_fold_results_basic:
-            print(f"{r['fold']:<12} {r['test_year']:<12} ${r['mae']:<11.2f} ${r['rmse']:<11.2f}")
-        
-        print("-" * 48)
-        print(f"{'Average':<12} {'All':<12} ${avg_mae_basic:<11.2f}")
         
         # Save results
         results_df = pd.DataFrame(all_fold_results_basic)
@@ -537,7 +672,7 @@ def run_training():
         df_test = df_clean.iloc[val_end:].copy()
         
         trained_basic = train_model(features_basic, "NN_Basic", df_train, df_val, df_test)
-        results_basic = evaluate_model(trained_basic)
+        results_basic = evaluate_model(trained_basic, df_test_fold=df_test)
         
         return results_basic
     
@@ -547,7 +682,7 @@ def run_training():
 # IV (implied volatility) is derived from market prices via BS inversion,
 # so using it to predict prices creates circular reasoning.
 # The Full model achieved ~$1.73 MAE but is methodologically problematic.
-# See thesis discussion section.
+# See project discussion section.
 # ============================================================
 
 
