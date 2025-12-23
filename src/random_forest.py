@@ -236,7 +236,7 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
             print(f"\n📊 Performance by Moneyness:")
             df_test_eval = df_test.copy()
             df_test_eval['rf_pred'] = test_pred
-            for bucket in ['OTM', 'ATM', 'ITM']:
+            for bucket in ['Low M', 'ATM', 'High M']:
                 bucket_mask = df_test_eval['money_bucket'] == bucket
                 if bucket_mask.sum() > 0:
                     bucket_mae = mean_absolute_error(

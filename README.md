@@ -1,233 +1,242 @@
-# Project Proposal: Machine Learning vs. Stochastic Models for SPX Option Pricing: Comparing Neural Networks, Heston, and Black-Scholes
+# Machine Learning for Option Pricing: A Comparative Study of Neural Networks, Ensemble Methods, and Black-Scholes
+
+**Advanced Programming 2025 — Data Science Project**
+
+A comprehensive empirical comparison of machine learning approaches against Black-Scholes for pricing S&P 500 index (SPX) European options.
 
 ---
 
-## Problem Statement & Motivation
+## 📊 Key Results
 
-Options are financial contracts that give the holder the right (but not the obligation) to buy or sell an underlying asset at a fixed strike price on (European) or before (American) a specified maturity date. Their price depends on several parameters including underlying price, strike, time to maturity, interest rates, and volatility.
-Black, Scholes and Merton derived in 1973 a closed-form (theoretical) price for European options under idealized assumptions that are not always met in real markets. BSM assumes for example frictionless markets and no arbitrage, plus the underlying follows geometric Brownian motion with constant volatility. 
+| Model | Avg MAE | vs Black-Scholes |
+|-------|---------|------------------|
+| **Black-Scholes (Historical Vol)** | $19.56 | Baseline |
+| **Neural Network (Two-Pass)** | $12.09 | **+38.2%** improvement |
+| **Random Forest** | $12.87 | +34.2% improvement |
+| **XGBoost** | $13.05 | +33.3% improvement |
 
-Since then, extensive research has extended or relaxed these assumptions. Notable examples include:
-- **Stochastic volatility models** (Heston, 1993): Allow volatility to vary randomly over time
-- **Jump-diffusion models** (Merton, 1976): Incorporate sudden price jumps
+*Results from 5-fold walk-forward validation on 3.96 million SPX options (2018-2025)*
 
-These advanced models often provide better fits to observed market prices but require numerical methods (e.g., Monte Carlo simulation) for pricing, which are computationally expensive.
+---
 
-Meanwhile, machine learning has emerged as a data-driven alternative that can potentially learn complex pricing patterns directly from historical market data without imposing restrictive parametric assumptions. However, it remains an open question whether ML can match or exceed the accuracy of sophisticated stochastic models while maintaining computational efficiency.
+## 🎯 Research Questions
 
-**This project investigates three key questions:**
-1. Where does Black-Scholes fail on real SPX options?
-2. Does Heston's stochastic volatility improve accuracy?
-3. Can neural networks match Heston's accuracy while being 100× faster?
+This study investigates 4 questions:
+
+1. **Can machine learning outperform Black-Scholes with historical volatility?**
+2. **Which model achieves best accuracy when all methods access equivalent training data?**
+3. **What features drive pricing accuracy?**
+4. **What are the training-inference trade-offs across model architectures, and which is most suitable for real-time applications?**
+
 
 
 ---
 
+## 📈 Key Findings
 
-## Planned Approach & Technology
-
-This project investigates whether neural networks can achieve competitive pricing accuracy compared to both classical (Black-Scholes) and advanced (Heston stochastic volatility) models, while offering computational advantages for real-time applications. 
-In this end we compute 1) Black-Scholes, 2) Monte Carlo simulation, 3) train a neural network, and to compare predicted prices to market mid quotes. 
-
-Note on data requirements: NNs are data-intensive and require substantial historical quotes for reliable training => they are less suitable for thinly traded or newly listed derivatives.
-
-This is why this project will focus on high-liquidity European options on the S&P 500 index (SPX). The data we will need will be: 
-    - S: Underlying price
-    - K: Strike price
-    - T: Time to expiration
-    - r: Risk-free rate
-    - σ: volatility of the underlying
-    - Option type: call or put
-
-S, K, T, option type and market bid/ask quotes are available from Yahoo Finance via the "yfinance" Python open-source library or/and any other available data source, with mid quotes as empirical option prices. The remaining parameters, r and σ, will be estimated: r from external risk-free rate data (e.g. Treasury yields) and σ (constant for BSM) following Hutchinson, Lo, and Poggio (1994) or refer to other litterature.
-
-
-### Model 1: Black-Scholes (Baseline)
-
-**Type**: Analytical closed-form solution
-
-**Inputs**: (S, K, T, r, σ, option_type)
-
-**Call option formula**:
-$$C_{BS} = S \cdot \Phi(d_1) - K \cdot e^{-rT} \cdot \Phi(d_2)$$
-
-where:
-$$d_1 = \frac{\ln(S/K) + (r + \sigma^2/2)T}{\sigma\sqrt{T}}, \quad d_2 = d_1 - \sigma\sqrt{T}$$
-
-**Put option formula** (via put-call parity or direct calculation):
-$$P_{BS} = K \cdot e^{-rT} \cdot \Phi(-d_2) - S \cdot \Phi(-d_1)$$
-
-**Key assumption**: Constant volatility
-
-**Purpose**: 
-- Fast baseline with instantaneous pricing (<0.01ms per option)
-- Well-understood theoretical properties
-- Known to fail for OTM options due to ignoring volatility smile
-
-**Expected performance**: Moderate accuracy, with systematic underpricing of OTM puts
-
-
-### Model 2: Heston Stochastic Volatility (Monte Carlo)
-
-**Type**: Numerical simulation under stochastic volatility dynamics
-
-**Model dynamics**:
-
-Stock price process:
-$$dS_t = \mu S_t \, dt + \sqrt{v_t} \, S_t \, dW_t^S$$
-
-Variance process:
-$$dv_t = \kappa(\theta - v_t) \, dt + \xi \sqrt{v_t} \, dW_t^v$$
-
-where:
-- $v_t$ = instantaneous variance (volatility squared)
-- $\kappa$ = mean reversion speed
-- $\theta$ = long-term variance mean
-- $\xi$ = volatility of volatility (vol-of-vol)
-- $\rho = \text{Corr}(W_t^S, W_t^v)$ = correlation between stock and volatility shocks
-
-**Key feature**: For equity indices like SPX, ρ < 0 (typically -0.6 to -0.8), creating the **leverage effect**:
-- When stock price drops, volatility increases
-- This generates the volatility skew: OTM puts have higher implied volatility than OTM calls
-
-**Parameter calibration**:
-- **Frequency**: Monthly (to adapt to changing market regimes)
-- **Objective**: Minimize sum of squared pricing errors on a calibration set:
-  $$\min_{\Theta} \sum_{i=1}^{N} w_i \left( P_i^{\text{market}} - P_i^{\text{Heston}}(\Theta) \right)^2$$
-  
-  where $\Theta = (\kappa, \theta, \xi, \rho, v_0)$ and $w_i$ are weights (e.g., inverse bid-ask spread)
-
-- **Calibration set**: ~50-100 liquid options spanning multiple maturities and strikes
-- **Optimization method**: Differential Evolution or Levenberg-Marquardt
-
-**Monte Carlo pricing**:
-- **Number of paths**: 100,000 per option
-- **Time discretization**: 252 steps (daily simulation)
-- **Numerical scheme**: Euler-Maruyama with **full truncation** (Andersen, 2008) to ensure $v_t \geq 0$:
-  $$v_{t+\Delta t} = \max(0, v_t + \kappa(\theta - v_t)\Delta t + \xi\sqrt{\max(v_t, 0)} \, \sqrt{\Delta t} \, Z_v)$$
-  
-  where $Z_v$ is a standard normal random variable correlated with the stock process.
-
-- **Variance reduction**: Antithetic variates
-
-**Implementation**: Use QuantLib (well-tested library) to avoid numerical errors
-
-**Purpose**: 
-- State-of-the-art benchmark representing sophisticated quantitative finance
-- Captures volatility smile/skew observed in real markets
-- Computationally expensive (~100-500ms per option)
-
-**Expected performance**: Best theoretical model accuracy, especially for OTM options
+- **Neural networks with two-pass training achieve best performance** at $12.09 MAE (38% improvement over Black-Scholes)
+- **Machine learning improvements are not uniform**: Gains are largest for out-of-the-money options and during volatile regimes (2025), while at-the-money options show smaller improvements (23% vs 38% overall)
+- **Bid-ask spreads dominate feature importance** at 34-36%, exceeding traditional inputs like volatility by an order of magnitude — market microstructure matters more than volatility modeling
+- **Neural networks offer favorable training-inference trade-offs**: despite requiring 113 minutes to train, they achieve 5.3 million options/second inference (4-8x faster than tree-based methods)
 
 ---
 
-### Model 3: Neural Network (Machine Learning)
+## 🔬 Methodology
 
-**Type**: Supervised learning - feedforward neural network trained on historical market data
+### Data
+- **Source**: WRDS OptionMetrics
+- **Asset**: SPX (S&P 500 Index) European options
+- **Period**: March 2018 – August 2025
+- **Size**: 3,963,262 options after filtering (from 35.3M raw)
 
-**Architecture (Arbitrary)**:
-```
-Input layer:    6 features
-                ↓
-Hidden layer 1: 64 neurons, ReLU activation, Dropout(0.2)
-                ↓
-Hidden layer 2: 32 neurons, ReLU activation, Dropout(0.2)
-                ↓
-Hidden layer 3: 16 neurons, ReLU activation
-                ↓
-Output layer:   1 neuron (predicted option price)
+### Data Filtering
+- Moneyness: 0.80 ≤ K/F ≤ 1.20
+- Liquidity: Volume ≥ 10, Open Interest ≥ 100
+- Implied Volatility: 5% ≤ σ_IV ≤ 100%
+- Time to Maturity: 2 days to 2 years
+- European exercise style only
+- Price outliers removed (1st-99th percentile)
+
+### Walk-Forward Validation
+
+| Fold | Training Period | Test Year | Train Size | Test Size |
+|------|-----------------|-----------|------------|-----------|
+| 1 | 2018-03 to 2020-12 | 2021 | 1,111,775 | 475,979 |
+| 2 | 2018-03 to 2021-12 | 2022 | 1,587,754 | 587,048 |
+| 3 | 2018-03 to 2022-12 | 2023 | 2,174,802 | 678,757 |
+| 4 | 2018-03 to 2023-12 | 2024 | 2,853,559 | 672,342 |
+| 5 | 2018-03 to 2024-12 | 2025 | 3,525,901 | 437,361 |
+
+### Models
+
+| Model | Type | Description |
+|-------|------|-------------|
+| **Black-Scholes** | Analytical | Baseline using 60-day historical volatility |
+| **Neural Network** | Deep Learning | 3-layer MLP (128-64-32) with two-pass training |
+| **Random Forest** | Ensemble | 300 trees, max depth 15 |
+| **XGBoost** | Gradient Boosting | 300 estimators, L2 regularization |
+
+### Two-Pass Training (Neural Network)
+
+A key methodological contribution addressing data utilization asymmetry:
+
+1. **Pass A (Epoch Selection)**: Train on 85% with validation-based early stopping to find optimal epoch count N*
+2. **Pass B (Final Training)**: Reinitialize and train on 100% of data for exactly N* epochs
+
+This enables fair comparison: all models now use 100% of training data.
+
+---
+
+## 🛠️ Installation
+
+### Prerequisites
+- Python 3.9+
+- Conda (Anaconda or Miniconda)
+- WRDS OptionMetrics access (for raw data)
+
+### Setup
+
+```bash
+# Clone repository
+git clone https://github.com/BRigoli25/Projet-data-science.git
+cd Projet-data-science
+
+# Create conda environment
+conda env create -f environment.yml
+conda activate pricing-option-env
+
+# Or use pip
+pip install -r requirements.txt
 ```
 
-**Input features**:
-1. Underlying price (S)
-2. Strike price (K)
-3. Time to maturity (T, in years)
-4. Risk-free rate (r)
-5. Historical volatility (σ_hist)
-6. Option type (encoded as 0=put, 1=call)
+### Data Setup
 
-**Feature engineering** (to improve training):
-- Log-moneyness: ln(S/K)
-- Normalized time: √T (volatility scales with square root of time)
-- Standardization: Scale all features to mean=0, std=1
-
-
-**What the neural network learns**:
-Unlike BS and Heston, which are based on theoretical models, the NN learns directly from market data. It can potentially capture:
-- **Volatility risk premium**: Market charges extra for volatility exposure
-- **Liquidity effects**: Less liquid options trade at discounts/premiums
-- **Supply/demand imbalances**: Heavy hedging flows, market maker inventory effects
-- **Behavioral biases**: Crash fear premium embedded in OTM put prices
-
-**Purpose**: 
-- Evaluate whether data-driven methods can compete with sophisticated theoretical models
-- Achieve faster inference than Heston MC (target: <1ms per option)
-- Potentially capture market effects beyond stochastic volatility
-
-**Expected performance**: Accuracy between BS and Heston, but with significant speed advantage over Heston
-    
----
-
-## Expected Challenges & Mitigation
-
-- **Dataset quality (preprocessing):** Real option data can contain noise or missing values. Rigorous preprocessing will need to be applied. ML needs a lot of data for training and historiacal option data is expensive and free sources may be limited.
-  
-- **Model overfitting:** Overfitting occurs when a model performs well on training data but poorly on unseen data which happens often when training a model. To face this, techniques such as cross-validation, regularization or early stopping can help to improve generalization.
-
-- **Heston Calibration** Heston has 5 parameters and calibration can be unstable or converge to local minima, leading to poor out-of-sample pricing. As it is complex implementation some useful resources can be found on QuantLib library. For calibration probably using same as academic paper values.
----
-
-## Success Criteria
-
-The project will be considered successful if the following criteria are met:
-
-
-1. **Predictive accuracy relative to market quotes:**
-   - Black–Scholes serves as a baseline, with MAE and RMSE in dollars (for call and put prices) reported on an out-of-sample test set.
-   - Baseline expectations based on academic literature (Bakshi et al., 1997):
-Black-Scholes MAE: 8-15 dollars per option (baseline; higher for OTM options),
-Heston MAE: 30-40% lower than BS (target: $5-10 per option), 
-Neural Network MAE: Between BS and Heston (target: within 10% of Heston)
-
-$$
-\text{MAE} = \frac{1}{N} \sum_{i=1}^{N} \left| P^{\text{model}}_i - P^{\text{mkt}}_i \right|
-$$
-
-$$
-\text{RMSE} = \sqrt{ \frac{1}{N} \sum_{i=1}^{N} \left( P^{\text{model}}_i - P^{\text{mkt}}_i \right)^2 }
-$$
-
-
-
-2. **Computational performance:**
-   - Total runtime and average runtime per option are reported for each method.
-   - There is a clear discussion of the trade-off between accuracy and computational cost (Black–Scholes vs. Monte Carlo vs. neural network inference).
-
+Place WRDS OptionMetrics files in `data/raw/`:
+1. **SPX_Options_raw_2018-2025.csv** — Option quotes
+2. **SPX_Forward_Prices_Complete_2018-2025.csv** — Forward prices
 
 ---
 
-## Stretch Idea: Learning the Greeks & Hedging Performance 
-As a stretch objective (only if time remains/no problem before), the project will estimate and analyze the Greeks (sensitivities of the option price with respect to market variables such as Delta, Gamma, Vega, Theta, Rho) and assess whether the trained models can reproduce these sensitivities accurately enough to support hedging strategies.
+## 🚀 Usage
 
-## Repository Structure
+### Run Complete Pipeline
+
+```bash
+python main.py
 ```
-option-pricing-thesis/
-├── README.md                    # This file
-├── main.py                      # Main entry point
+
+Pipeline executes (~135 min total):
+1. Data preprocessing & Black-Scholes baseline (9 min)
+2. Neural Network with two-pass training (113 min)
+3. Random Forest training (10 min)
+4. XGBoost training (2 min)
+5. Visualization generation (1 min)
+
+### Run Individual Steps
+
+```bash
+python main.py --preprocess   # Data preprocessing only
+python main.py --models       # Train all ML models
+python main.py --step nn      # Neural Network only
+python main.py --step rf      # Random Forest only
+python main.py --step xgb     # XGBoost only
+python main.py --viz          # Generate visualizations
+python main.py --runtime      # Runtime comparison
+```
+
+---
+
+## 📁 Project Structure
+
+```
+Projet-data-science/
+├── main.py                      # Pipeline orchestrator
 ├── environment.yml              # Conda environment
+├── requirements.txt             # pip dependencies
+├── README.md                    # This file
+│
 ├── src/
-│   ├── config.py               # Configuration & paths
-│   ├── data_preprocessing.py   # Black-Scholes baseline
-│   └── neural_network.py       # NN models
+│   ├── config.py               # Centralized configuration
+│   ├── data_preprocessing.py   # Data processing & BS baseline
+│   ├── neural_network.py       # Neural network with two-pass training
+│   ├── random_forest.py        # Random Forest model
+│   ├── xg_boost.py             # XGBoost model
+│   └── visualizations.py       # Publication-ready plots
+│
 ├── data/
-│   └── raw/                    # Raw CSV files (user-provided)
+│   └── raw/                    # Raw WRDS data (not in git)
+│
 ├── results/                    # Output CSV files & plots
-├── models/                     # Saved trained models
-└── notebooks/                  # Optional exploration
+│   └── plots/                  # Generated figures
+│
+└── models/                     # Saved trained models
 ```
 
-## Prerequisites
+---
 
-- **Python 3.9+**
-- **Conda** (Anaconda or Miniconda)
-- **Data Access**: WRDS OptionMetrics subscription required
+## 📊 Features (14 total)
+
+| Feature | Description |
+|---------|-------------|
+| `moneyness` | K/F (strike / forward price) |
+| `log_moneyness` | ln(K/F) |
+| `T` | Time to maturity (years) |
+| `log_T`, `sqrt_T` | Time transformations |
+| `is_call` | 1 for call, 0 for put |
+| `forward_price_norm` | Normalized forward price |
+| `moneyness_T` | Moneyness × T interaction |
+| `log_moneyness_sqrt_T` | ln(K/F) × √T interaction |
+| `log_volume` | ln(volume + 1) |
+| `log_open_interest` | ln(open interest + 1) |
+| `bid_ask_spread` | Ask - Bid |
+| `historical_vol` | 60-day rolling volatility |
+| `historical_vol_sqrt_T` | Historical vol × √T |
+
+**Note**: Implied volatility is intentionally excluded to avoid circularity.
+
+---
+
+## 📈 Feature Importance
+
+| Feature | Random Forest | XGBoost |
+|---------|---------------|---------|
+| bid_ask_spread | 34.14% | 36.09% |
+| is_call | 9.37% | 15.37% |
+| moneyness_T | 7.84% | 8.53% |
+| log_moneyness | 7.48% | 5.40% |
+| historical_vol | 1.73% | 0.79% |
+
+Bid-ask spread dominates, suggesting market microstructure effects are more critical for pricing accuracy than volatility estimation.
+
+---
+
+## ⚡ Computational Performance
+
+| Model | Training Time | Inference (s) | Options/sec |
+|-------|---------------|---------------|-------------|
+| Black-Scholes | — | 0.027 | 16,142,431 |
+| Neural Network | 113 min | 0.083 | 5,279,921 |
+| XGBoost | 2 min | 0.339 | 1,290,513 |
+| Random Forest | 10 min | 0.712 | 614,730 |
+
+---
+
+## 📚 References
+
+- Black, F., & Scholes, M. (1973). The pricing of options and corporate liabilities. *Journal of Political Economy*, 81(3), 637-654.
+- Hutchinson, J. M., Lo, A. W., & Poggio, T. (1994). A nonparametric approach to pricing and hedging derivative securities via learning networks. *Journal of Finance*, 49(3), 851-889.
+- Breiman, L. (2001). Random forests. *Machine Learning*, 45(1), 5-32.
+- Chen, T., & Guestrin, C. (2016). XGBoost: A scalable tree boosting system. *Proc. 22nd ACM SIGKDD*, 785-794.
+- Grinsztajn, L., et al. (2022). Why do tree-based models still outperform deep learning on typical tabular data? *NeurIPS*.
+
+---
+
+## 📝 License
+
+This project is for academic purposes (Advanced Programming 2025).
+
+---
+
+## 🤖 AI Tools Disclosure
+
+This project utilized Claude (Anthropic) for code debugging, methodology discussion, and writing assistance. All code implementations, experimental design decisions, and interpretations are the author's own work.

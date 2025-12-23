@@ -176,42 +176,33 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
         df_train_val = df[train_val_mask].copy()
         df_test = df[test_mask].copy()
         
-        # Split train_val: 85% train, 15% validation (temporally)
-        n_total = len(df_train_val)
-        n_train = int(0.85 * n_total)
-        
-        df_train = df_train_val.iloc[:n_train].copy()
-        df_val = df_train_val.iloc[n_train:].copy() #last 15 for early stopping
-        
-        if len(df_test) == 0:
-            print(f"⚠️ No test data for {fold['name']}, skipping")
-            continue
-        
-        print(f"\nTrain: {len(df_train):,} options (first 85%)")
-        print(f"Val:   {len(df_val):,} options (last 15%, for early stopping)")
+        # Use 100% of pre-test data for training (no validation split)
+        df_train = df_train_val
+        df_val = None
+
+        print(f"\nTrain: {len(df_train):,} options (100% up to {fold['train_end']})")
+        print(f"Val:   0 options (no validation split)")
         print(f"Test:  {len(df_test):,} options ({fold['test_year']})")
-        
+
         # Prepare data
         X_train = df_train[feature_columns].to_numpy(dtype=np.float32)
         y_train = df_train[target_col].to_numpy(dtype=np.float32)
 
-        X_val = df_val[feature_columns].to_numpy(dtype=np.float32)
-        y_val = df_val[target_col].to_numpy(dtype=np.float32)
+        X_val, y_val = None, None
+
 
         X_test = df_test[feature_columns].to_numpy(dtype=np.float32)
         y_test = df_test[target_col].to_numpy(dtype=np.float32)
 
         X_train = check_and_clean_array("X_train", X_train)
         y_train = check_and_clean_array("y_train", y_train)
-        X_val   = check_and_clean_array("X_val", X_val)
-        y_val   = check_and_clean_array("y_val", y_val)
         X_test  = check_and_clean_array("X_test", X_test)
         y_test  = check_and_clean_array("y_test", y_test)
 
         # Train model
         print(f"\n--- Training XGBoost ({fold['name']}) ---")
         start_time = time.perf_counter()
-        xgb_model = train_xgboost(X_train, y_train, X_val, y_val)
+        xgb_model = train_xgboost(X_train, y_train)
         train_time = time.perf_counter() - start_time
         print(f"✅ Training completed in {train_time:.1f}s")
         
@@ -223,7 +214,7 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
         # Save training time
         runtime_path = os.path.join(RESULTS_DIR, "training_times.csv")
         header = ["model_name", "n_train", "n_val", "n_test", "seconds"]
-        row = [f"XGB_Basic_{fold['name'].replace(' ', '')}", len(df_train), len(df_val), len(df_test), train_time]
+        row = [f"XGB_Basic_{fold['name'].replace(' ', '')}", len(df_train), 0, len(df_test), train_time]
         
         file_exists = os.path.exists(runtime_path)
         with open(runtime_path, "a", newline="") as f:
@@ -272,7 +263,7 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
             print(f"\n📊 Performance by Moneyness:")
             df_test_eval = df_test.copy()
             df_test_eval['xgb_pred'] = test_pred
-            for bucket in ['OTM', 'ATM', 'ITM']:
+            for bucket in ['Low M', 'ATM', 'High M']:
                 bucket_mask = df_test_eval['money_bucket'] == bucket
                 if bucket_mask.sum() > 0:
                     bucket_mae = mean_absolute_error(
@@ -287,11 +278,13 @@ def run_walk_forward_validation(df, feature_columns, target_col='mid_price'):
         else:
             mae_atm = np.nan
 
+        val_size = 0 if df_val is None else len(df_val)
+        
         results.append({
             'fold': fold['name'],
             'test_year': fold['test_year'],
             'train_size': len(df_train),
-            'val_size': len(df_val),
+            'val_size': val_size,
             'test_size': len(df_test),
 
             # Train metrics

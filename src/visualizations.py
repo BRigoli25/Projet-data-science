@@ -379,14 +379,7 @@ def plot_error_vs_moneyness(results, df_full):
     if moneyness_col is None:
         print(f"   ⚠️ No moneyness column found, skipping")
         return
-    
-    if price_col is None or bs_col is None:
-        print(f"   ⚠️ Missing price columns (price_col={price_col}, bs_col={bs_col})")
-        print(f"   Using approximation based on overall/ATM ratios instead...")
-        
-        # Use approximation method
-        _plot_error_vs_moneyness_approx(results)
-        return
+ 
     
     print(f"   Using columns: moneyness={moneyness_col}, price={price_col}, bs={bs_col}")
     
@@ -454,72 +447,6 @@ def plot_error_vs_moneyness(results, df_full):
     plt.savefig(os.path.join(PLOTS_DIR, '03_error_vs_moneyness.png'), dpi=300, bbox_inches='tight')
     plt.savefig(os.path.join(PLOTS_DIR, '03_error_vs_moneyness.pdf'), bbox_inches='tight')
     print("   ✅ Saved: 03_error_vs_moneyness.png/pdf")
-    plt.close()
-
-
-def _plot_error_vs_moneyness_approx(results):
-    """Approximation when full data not available - uses ATM/overall ratios."""
-    
-    if 'BS (Historical Vol)' not in results:
-        print("   ⚠️ No BS results for approximation")
-        return
-    
-    # Create approximate moneyness bins based on known patterns
-    labels = ['0.80-0.85', '0.85-0.90', '0.90-0.95', '0.95-1.00', 
-              '1.00-1.05', '1.05-1.10', '1.10-1.15', '1.15-1.20']
-    
-    # BS errors typically higher at extremes (smile pattern)
-    bs_overall = results['BS (Historical Vol)']['avg_mae']
-    bs_atm = results['BS (Historical Vol)'].get('avg_mae_atm', bs_overall * 0.95)
-    
-    # Approximate BS error curve (higher at extremes due to smile)
-    bs_pattern = [1.3, 1.15, 1.05, 0.95, 0.95, 1.05, 1.15, 1.3]
-    bs_by_bin = [bs_overall * p for p in bs_pattern]
-    
-    fig, ax = plt.subplots(figsize=(12, 7))
-    x = np.arange(len(labels))
-    
-    ax.plot(x, bs_by_bin, marker='s', color=COLORS['BS (Historical Vol)'],
-            linewidth=2.5, markersize=10, label=f"BS (Avg: ${bs_overall:.2f})")
-    
-    for model in ['Neural Network', 'Random Forest', 'XGBoost']:
-        if model not in results:
-            continue
-        
-        data = results[model]
-        overall_mae = data['avg_mae']
-        atm_mae = data.get('avg_mae_atm', overall_mae)
-        
-        improvement_overall = (bs_overall - overall_mae) / bs_overall
-        improvement_atm = (bs_overall - atm_mae) / bs_overall if bs_overall > 0 else improvement_overall
-        
-        # ML models: better improvement on OTM than ATM
-        ml_pattern = []
-        for i, (bs_val, label) in enumerate(zip(bs_by_bin, labels)):
-            if '0.95' in label or '1.00' in label or '1.05' in label:
-                ml_val = bs_val * (1 - improvement_atm * 0.9)
-            else:
-                ml_val = bs_val * (1 - improvement_overall * 1.15)
-            ml_pattern.append(ml_val)
-        
-        ax.plot(x, ml_pattern, marker=MARKERS.get(model, 'o'), color=COLORS.get(model, 'gray'),
-                linewidth=2.5, markersize=10, label=f"{model} (Avg: ${overall_mae:.2f})")
-    
-    ax.axvspan(3, 5, alpha=0.15, color='green', label='ATM Zone')
-    
-    ax.set_xlabel('Moneyness (K/F)', fontsize=12)
-    ax.set_ylabel('Mean Absolute Error ($)', fontsize=12)
-    ax.set_title('Pricing Error by Moneyness (Approximated)\n(Machine Learning excels for OTM options)', 
-                 fontsize=14, fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45)
-    ax.legend(loc='upper right', fontsize=10)
-    ax.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(PLOTS_DIR, '03_error_vs_moneyness.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(PLOTS_DIR, '03_error_vs_moneyness.pdf'), bbox_inches='tight')
-    print("   ✅ Saved: 03_error_vs_moneyness.png/pdf (approximated)")
     plt.close()
 
 
@@ -777,7 +704,7 @@ def plot_rmse_comparison(results):
 # PLOT 6: CALL VS PUT PERFORMANCE (ALL MODELS)
 # ============================================================
 
-def plot_call_put_comparison():
+def plot_call_put_comparison(results = None):
     """Compare Call vs Put MAE across all models (including Black-Scholes)."""
     print("\n📊 Generating Call vs Put MAE comparison...")
 
@@ -910,55 +837,246 @@ def plot_model_comparison(results):
 
 
 # ============================================================
-# PLOT 8: FEATURE IMPORTANCE
+# PLOT 8: FEATURE IMPORTANCE (RF / XGB / NN)
 # ============================================================
 
-def plot_feature_importance(rf_importance, xgb_importance, top_k=12):
+def plot_feature_importance(rf_importance=None, xgb_importance=None, nn_importance=None, top_k=12):
     """Horizontal bar chart of feature importance."""
     print("\n📊 Generating feature importance plot...")
-    
-    if not rf_importance and not xgb_importance:
+
+    rf_importance = rf_importance or {}
+    xgb_importance = xgb_importance or {}
+    nn_importance = nn_importance or {}
+
+    if not rf_importance and not xgb_importance and not nn_importance:
         print("   ⚠️ No feature importance data, skipping")
         return
-    
-    # Combine and sort by average
-    all_features = set(rf_importance.keys()) | set(xgb_importance.keys())
+
+    # Combine all features
+    all_features = set(rf_importance.keys()) | set(xgb_importance.keys()) | set(nn_importance.keys())
+
     rows = []
     for f in all_features:
         rf_val = rf_importance.get(f, 0.0)
         xgb_val = xgb_importance.get(f, 0.0)
-        rows.append({'feature': f, 'RF': rf_val, 'XGB': xgb_val, 'avg': (rf_val + xgb_val) / 2})
-    
-    df = pd.DataFrame(rows).sort_values('avg', ascending=True).tail(top_k)
-    
+        nn_val = nn_importance.get(f, 0.0)
+
+        # Average only across models that have the feature
+        vals = [v for v in [rf_val, xgb_val, nn_val] if v is not None]
+        avg_val = np.mean(vals) if len(vals) else 0.0
+
+        rows.append({"feature": f, "RF": rf_val, "XGB": xgb_val, "NN": nn_val, "avg": avg_val})
+
+    df = pd.DataFrame(rows).sort_values("avg", ascending=True).tail(top_k)
+
     fig, ax = plt.subplots(figsize=(10, 8))
-    
+
     y = np.arange(len(df))
-    height = 0.35
-    
-    ax.barh(y - height/2, df['RF'] * 100, height, label='Random Forest', 
-            color=COLORS['Random Forest'], edgecolor='black')
-    ax.barh(y + height/2, df['XGB'] * 100, height, label='XGBoost',
-            color=COLORS['XGBoost'], edgecolor='black')
-    
+    height = 0.25
+
+    # Use only what exists
+    has_rf = df["RF"].abs().sum() > 0
+    has_xgb = df["XGB"].abs().sum() > 0
+    has_nn = df["NN"].abs().sum() > 0
+
+    shift = 0
+    if has_rf:
+        ax.barh(y - height, df["RF"] * 100, height, label="Random Forest",
+                color=COLORS["Random Forest"], edgecolor="black")
+    if has_xgb:
+        ax.barh(y, df["XGB"] * 100, height, label="XGBoost",
+                color=COLORS["XGBoost"], edgecolor="black")
+    if has_nn:
+        # If you don't have a NN color yet, define COLORS["Neural Network"]
+        nn_color = COLORS.get("Neural Network", "gray")
+        ax.barh(y + height, df["NN"] * 100, height, label="Neural Network",
+                color=nn_color, edgecolor="black")
+
     ax.set_yticks(y)
-    ax.set_yticklabels(df['feature'])
-    ax.set_xlabel('Feature Importance (%)', fontsize=12)
-    ax.set_title('Feature Importance: Random Forest vs XGBoost',
-                 fontsize=14, fontweight='bold')
-    ax.legend(loc='lower right')
-    ax.grid(True, alpha=0.3, axis='x')
-    
-    # Highlight bid-ask spread
-    if 'bid_ask_spread' in df['feature'].values:
-        idx = df['feature'].tolist().index('bid_ask_spread')
-        ax.axhspan(idx - 0.5, idx + 0.5, alpha=0.2, color='yellow')
-    
+    ax.set_yticklabels(df["feature"])
+    ax.set_xlabel("Feature Importance (%)", fontsize=12)
+    ax.set_title("Feature Importance: RF vs XGB vs NN", fontsize=14, fontweight="bold")
+    ax.legend(loc="lower right")
+    ax.grid(True, alpha=0.3, axis="x")
+
+    if "bid_ask_spread" in df["feature"].values:
+        idx = df["feature"].tolist().index("bid_ask_spread")
+        ax.axhspan(idx - 0.5, idx + 0.5, alpha=0.2, color="yellow")
+
     plt.tight_layout()
-    plt.savefig(os.path.join(PLOTS_DIR, '08_feature_importance.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(PLOTS_DIR, '08_feature_importance.pdf'), bbox_inches='tight')
+    plt.savefig(os.path.join(PLOTS_DIR, "08_feature_importance.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(PLOTS_DIR, "08_feature_importance.pdf"), bbox_inches="tight")
     print("   ✅ Saved: 08_feature_importance.png/pdf")
     plt.close()
+
+# ============================================================
+# PLOT 9-10: ERROR BY MONEyness REGIME (OTM/ATM/ITM) SEPARATE FOR CALLS & PUTS
+# ============================================================
+
+def _infer_pred_cols(df_full):
+    """
+    Try to infer prediction column names in df_full for each model.
+    Adjust these aliases to match your pipeline if needed.
+    """
+    aliases = {
+        "BS (Historical Vol)": ["bs_price_hist", "bs_hist", "bs_price", "bs_historical"],
+        "Neural Network": ["nn_pred", "pred_nn", "y_pred_nn", "nn_prediction"],
+        "Random Forest": ["rf_pred", "pred_rf", "y_pred_rf", "rf_prediction"],
+        "XGBoost": ["xgb_pred", "pred_xgb", "y_pred_xgb", "xgb_prediction"],
+    }
+
+    pred_cols = {}
+    for model, cols in aliases.items():
+        for c in cols:
+            if c in df_full.columns:
+                pred_cols[model] = c
+                break
+    return pred_cols
+
+
+def plot_error_by_moneyness_regime(results, df_full, atm_band=0.05):
+    """
+    Creates two plots:
+    - Calls: MAE by {ITM, ATM, OTM}
+    - Puts : MAE by {OTM, ATM, ITM} (reversed definition)
+    Uses REAL per-option errors if prediction columns exist in df_full.
+    """
+    print("\n📊 Generating Call/Put MAE by moneyness regime (OTM/ATM/ITM)...")
+
+    if df_full is None:
+        print("   ⚠️ df_full is None, cannot compute regime errors.")
+        return
+
+    # Required columns
+    if "cp_flag" not in df_full.columns:
+        print("   ⚠️ Missing cp_flag in df_full.")
+        return
+
+    # Moneyness column
+    moneyness_col = None
+    for col in ["moneyness", "Moneyness", "K_F", "strike_price_ratio"]:
+        if col in df_full.columns:
+            moneyness_col = col
+            break
+    if moneyness_col is None:
+        print("   ⚠️ No moneyness column found.")
+        return
+
+    # Price column
+    price_col = None
+    for col in ["mid_price", "midprice", "option_price", "price"]:
+        if col in df_full.columns:
+            price_col = col
+            break
+    if price_col is None and "best_bid" in df_full.columns and "best_offer" in df_full.columns:
+        df_full["mid_price"] = (df_full["best_bid"] + df_full["best_offer"]) / 2
+        price_col = "mid_price"
+
+    if price_col is None:
+        print("   ⚠️ No price column found (mid_price).")
+        return
+
+    # Prediction columns
+    pred_cols = _infer_pred_cols(df_full)
+    if "BS (Historical Vol)" not in pred_cols:
+        print("   ⚠️ No BS prediction column found in df_full (e.g., bs_price_hist).")
+        return
+
+    # We only plot models that we can compute REAL errors for
+    models_to_plot = [m for m in results.keys() if m in pred_cols]
+    if len(models_to_plot) == 0:
+        print("   ⚠️ No models have prediction columns in df_full. Add NN/RF/XGB preds to df_full first.")
+        return
+
+    # Clean valid rows
+    use_cols = [moneyness_col, price_col, "cp_flag"] + [pred_cols[m] for m in models_to_plot]
+    df = df_full[use_cols].dropna()
+
+    # Define regimes
+    def regime_call(kf):
+        if kf < 1 - atm_band:
+            return "ITM"
+        elif kf > 1 + atm_band:
+            return "OTM"
+        return "ATM"
+
+    def regime_put(kf):
+        # reversed for puts
+        if kf < 1 - atm_band:
+            return "OTM"
+        elif kf > 1 + atm_band:
+            return "ITM"
+        return "ATM"
+
+    # --- helper to compute MAE table for a cp type ---
+    def compute_table(cp):
+        sub = df[df["cp_flag"] == cp].copy()
+        if sub.empty:
+            return None
+
+        if cp == "C":
+            sub["regime"] = sub[moneyness_col].apply(regime_call)
+            order = ["ITM", "ATM", "OTM"]
+            title = "Calls"
+            out_png = "09_calls_moneyness_regimes.png"
+            out_pdf = "09_calls_moneyness_regimes.pdf"
+        else:
+            sub["regime"] = sub[moneyness_col].apply(regime_put)
+            order = ["OTM", "ATM", "ITM"]
+            title = "Puts"
+            out_png = "10_puts_moneyness_regimes.png"
+            out_pdf = "10_puts_moneyness_regimes.pdf"
+
+        rows = []
+        for model in models_to_plot:
+            pred = pred_cols[model]
+            sub[f"abs_err_{model}"] = (sub[pred] - sub[price_col]).abs()
+
+            grouped = sub.groupby("regime", observed=True)[f"abs_err_{model}"].mean()
+            rows.append({
+                "Model": model,
+                **{r: float(grouped.get(r, np.nan)) for r in order}
+            })
+
+        table = pd.DataFrame(rows)
+        return title, order, table, out_png, out_pdf
+
+    # --- plotting ---
+    def plot_table(title, order, table, out_png, out_pdf):
+        fig, ax = plt.subplots(figsize=(10, 6))
+        x = np.arange(len(order))
+        width = 0.18
+
+        for i, model in enumerate(table["Model"]):
+            vals = [table.loc[table["Model"] == model, r].values[0] for r in order]
+            ax.bar(x + (i - (len(table)-1)/2)*width, vals, width,
+                   label=model, color=COLORS.get(model, "gray"), edgecolor="black")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(order)
+        ax.set_ylabel("Mean Absolute Error ($)")
+        ax.set_title(f"{title}: MAE by Moneyness Regime (ATM band ±{atm_band:.2f})", fontweight="bold")
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis="y")
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(PLOTS_DIR, out_png), dpi=300, bbox_inches="tight")
+        plt.savefig(os.path.join(PLOTS_DIR, out_pdf), bbox_inches="tight")
+        print(f"   ✅ Saved: {out_png}/{out_pdf}")
+        plt.close()
+
+    calls = compute_table("C")
+    puts  = compute_table("P")
+
+    if calls:
+        plot_table(*calls)
+    else:
+        print("   ⚠️ No call data found (cp_flag=='C').")
+
+    if puts:
+        plot_table(*puts)
+    else:
+        print("   ⚠️ No put data found (cp_flag=='P').")
 
 
 # ============================================================
@@ -994,7 +1112,8 @@ def generate_all_plots():
     plot_call_put_comparison(results)       # 06 - Call vs Put (all models)
     plot_model_comparison(results)          # 07 - Model comparison bar
     plot_feature_importance(rf_importance, xgb_importance)  # 08 - Feature importance
-    
+    plot_error_by_moneyness_regime(results, df_full, atm_band=0.05) 
+
     print("\n" + "=" * 60)
     print("✅ ALL VISUALIZATIONS GENERATED!")
     print("=" * 60)

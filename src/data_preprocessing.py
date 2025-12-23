@@ -279,7 +279,7 @@ def run_preprocessing():
     df['money_bucket'] = pd.cut(
         df['moneyness'], 
         bins=[0, 0.95, 1.05, 3.0], 
-        labels=['OTM', 'ATM', 'ITM']
+        labels=['Low M', 'ATM', 'High M']
     )
     
     print("✅ Created features:")
@@ -429,6 +429,11 @@ def run_preprocessing():
             'mae_atm': mae_atm,
             'rmse': rmse,
             'bias': bias,
+            'mae_call': df_test[df_test['cp_flag'] == 'C']['abs_error_hist'].mean() if (df_test['cp_flag'] == 'C').sum() > 0 else np.nan,
+            'mae_put': df_test[df_test['cp_flag'] == 'P']['abs_error_hist'].mean() if (df_test['cp_flag'] == 'P').sum() > 0 else np.nan,
+            'bias_call': df_test[df_test['cp_flag'] == 'C']['bs_error_hist'].mean() if (df_test['cp_flag'] == 'C').sum() > 0 else np.nan,
+            'bias_put': df_test[df_test['cp_flag'] == 'P']['bs_error_hist'].mean() if (df_test['cp_flag'] == 'P').sum() > 0 else np.nan,
+
         })
         
         print(f"\n{fold_name}:")
