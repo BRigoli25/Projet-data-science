@@ -91,7 +91,7 @@ Output layer:   1 neuron (predicted option price)
 
 Traditional neural network training uses 85% of data for training and 15% for validation (early stopping), while tree-based methods use 100% of data. This creates an unfair comparison.
 
-**Our solution:**
+**Solution:**
 - **Pass A (Epoch Selection)**: Train on 85% with validation on 15% to find optimal epoch count N*. Discard this model.
 - **Pass B (Final Training)**: Reinitialize network and train on 100% of data for exactly N* epochs. Use this model for predictions.
 
