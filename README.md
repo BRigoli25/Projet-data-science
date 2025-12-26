@@ -1,242 +1,275 @@
-# Machine Learning for Option Pricing: A Comparative Study of Neural Networks, Ensemble Methods, and Black-Scholes
+# Machine Learning for SPX Option Pricing
 
-**Advanced Programming 2025 — Data Science Project**
+**Author:** Bastian Rigoli  
+**Course:** Advanced Programming 2025  
+**Institution:** University of Lausanne
 
-A comprehensive empirical comparison of machine learning approaches against Black-Scholes for pricing S&P 500 index (SPX) European options.
+## Project Overview
 
----
+This project compares machine learning approaches (Neural Networks, Random Forest, XGBoost) against Black-Scholes for pricing S&P 500 index options. 
 
-## 📊 Key Results
-
-| Model | Avg MAE | vs Black-Scholes |
-|-------|---------|------------------|
-| **Black-Scholes (Historical Vol)** | $19.56 | Baseline |
-| **Neural Network (Two-Pass)** | $12.09 | **+38.2%** improvement |
-| **Random Forest** | $12.87 | +34.2% improvement |
-| **XGBoost** | $13.05 | +33.3% improvement |
-
-*Results from 5-fold walk-forward validation on 3.96 million SPX options (2018-2025)*
-
----
-
-## 🎯 Research Questions
-
-This study investigates 4 questions:
-
-1. **Can machine learning outperform Black-Scholes with historical volatility?**
-2. **Which model achieves best accuracy when all methods access equivalent training data?**
-3. **What features drive pricing accuracy?**
-4. **What are the training-inference trade-offs across model architectures, and which is most suitable for real-time applications?**
-
-
-
----
-
-## 📈 Key Findings
-
-- **Neural networks with two-pass training achieve best performance** at $12.09 MAE (38% improvement over Black-Scholes)
-- **Machine learning improvements are not uniform**: Gains are largest for out-of-the-money options and during volatile regimes (2025), while at-the-money options show smaller improvements (23% vs 38% overall)
-- **Bid-ask spreads dominate feature importance** at 34-36%, exceeding traditional inputs like volatility by an order of magnitude — market microstructure matters more than volatility modeling
-- **Neural networks offer favorable training-inference trade-offs**: despite requiring 113 minutes to train, they achieve 5.3 million options/second inference (4-8x faster than tree-based methods)
-
----
-
-## 🔬 Methodology
-
-### Data
-- **Source**: WRDS OptionMetrics
-- **Asset**: SPX (S&P 500 Index) European options
-- **Period**: March 2018 – August 2025
-- **Size**: 3,963,262 options after filtering (from 35.3M raw)
-
-### Data Filtering
-- Moneyness: 0.80 ≤ K/F ≤ 1.20
-- Liquidity: Volume ≥ 10, Open Interest ≥ 100
-- Implied Volatility: 5% ≤ σ_IV ≤ 100%
-- Time to Maturity: 2 days to 2 years
-- European exercise style only
-- Price outliers removed (1st-99th percentile)
-
-### Walk-Forward Validation
-
-| Fold | Training Period | Test Year | Train Size | Test Size |
-|------|-----------------|-----------|------------|-----------|
-| 1 | 2018-03 to 2020-12 | 2021 | 1,111,775 | 475,979 |
-| 2 | 2018-03 to 2021-12 | 2022 | 1,587,754 | 587,048 |
-| 3 | 2018-03 to 2022-12 | 2023 | 2,174,802 | 678,757 |
-| 4 | 2018-03 to 2023-12 | 2024 | 2,853,559 | 672,342 |
-| 5 | 2018-03 to 2024-12 | 2025 | 3,525,901 | 437,361 |
-
-### Models
-
-| Model | Type | Description |
-|-------|------|-------------|
-| **Black-Scholes** | Analytical | Baseline using 60-day historical volatility |
-| **Neural Network** | Deep Learning | 3-layer MLP (128-64-32) with two-pass training |
-| **Random Forest** | Ensemble | 300 trees, max depth 15 |
-| **XGBoost** | Gradient Boosting | 300 estimators, L2 regularization |
-
-### Two-Pass Training (Neural Network)
-
-A key methodological contribution addressing data utilization asymmetry:
-
-1. **Pass A (Epoch Selection)**: Train on 85% with validation-based early stopping to find optimal epoch count N*
-2. **Pass B (Final Training)**: Reinitialize and train on 100% of data for exactly N* epochs
-
-This enables fair comparison: all models now use 100% of training data.
-
----
-
-## 🛠️ Installation
-
-### Prerequisites
-- Python 3.9+
-- Conda (Anaconda or Miniconda)
-- WRDS OptionMetrics access (for raw data)
-
-### Setup
-
-```bash
-# Clone repository
-git clone https://github.com/BRigoli25/Projet-data-science.git
-cd Projet-data-science
-
-# Create conda environment
-conda env create -f environment.yml
-conda activate pricing-option-env
-
-# Or use pip
-pip install -r requirements.txt
-```
-
-### Data Setup
-
-Place WRDS OptionMetrics files in `data/raw/`:
-1. **SPX_Options_raw_2018-2025.csv** — Option quotes
-2. **SPX_Forward_Prices_Complete_2018-2025.csv** — Forward prices
-
----
-
-## 🚀 Usage
-
-### Run Complete Pipeline
-
-```bash
-python main.py
-```
-
-Pipeline executes (~135 min total):
-1. Data preprocessing & Black-Scholes baseline (9 min)
-2. Neural Network with two-pass training (113 min)
-3. Random Forest training (10 min)
-4. XGBoost training (2 min)
-5. Visualization generation (1 min)
-
-### Run Individual Steps
-
-```bash
-python main.py --preprocess   # Data preprocessing only
-python main.py --models       # Train all ML models
-python main.py --step nn      # Neural Network only
-python main.py --step rf      # Random Forest only
-python main.py --step xgb     # XGBoost only
-python main.py --viz          # Generate visualizations
-python main.py --runtime      # Runtime comparison
-```
+**Key Innovation:** Two-pass training methodology ensures fair comparison by having all models use 100% of training data.
 
 ---
 
 ## 📁 Project Structure
-
 ```
-Projet-data-science/
-├── main.py                      # Pipeline orchestrator
-├── environment.yml              # Conda environment
-├── requirements.txt             # pip dependencies
+option-pricing-project/
 ├── README.md                    # This file
-│
+├── PROPOSAL.md                  # Project proposal
+├── requirements.txt             # Pip dependencies
+├── environment.yml              # Conda environment
+├── main.py                      # Entry point - RUN THIS
 ├── src/
-│   ├── config.py               # Centralized configuration
-│   ├── data_preprocessing.py   # Data processing & BS baseline
-│   ├── neural_network.py       # Neural network with two-pass training
-│   ├── random_forest.py        # Random Forest model
-│   ├── xg_boost.py             # XGBoost model
-│   └── visualizations.py       # Publication-ready plots
-│
+│   ├── __init__.py
+│   ├── data_loader.py          # Data preprocessing & BS baseline
+│   ├── models.py               # Neural Network, RF, XGBoost
+│   └── evaluation.py           # Visualizations
 ├── data/
-│   └── raw/                    # Raw WRDS data (not in git)
-│
-├── results/                    # Output CSV files & plots
-│   └── plots/                  # Generated figures
-│
-└── models/                     # Saved trained models
+│   └── raw/                    # Place data files here (see below)
+├── results/                    # Auto-generated outputs
+└── models/                     # Auto-generated saved models
 ```
 
 ---
 
-## 📊 Features (14 total)
+## 🚀 Quick Start
 
-| Feature | Description |
-|---------|-------------|
-| `moneyness` | K/F (strike / forward price) |
-| `log_moneyness` | ln(K/F) |
-| `T` | Time to maturity (years) |
-| `log_T`, `sqrt_T` | Time transformations |
-| `is_call` | 1 for call, 0 for put |
-| `forward_price_norm` | Normalized forward price |
-| `moneyness_T` | Moneyness × T interaction |
-| `log_moneyness_sqrt_T` | ln(K/F) × √T interaction |
-| `log_volume` | ln(volume + 1) |
-| `log_open_interest` | ln(open interest + 1) |
-| `bid_ask_spread` | Ask - Bid |
-| `historical_vol` | 60-day rolling volatility |
-| `historical_vol_sqrt_T` | Historical vol × √T |
+### **Option 1: Using Conda (Recommended)**
+```bash
+# 1. Clone repository
+git clone https://github.com/BRigoli25/Projet-data-science.git
+cd Projet-data-science
 
-**Note**: Implied volatility is intentionally excluded to avoid circularity.
+# 2. Create environment
+conda env create -f environment.yml
 
----
+# 3. Activate environment
+conda activate fin_project
 
-## 📈 Feature Importance
+# 4. Add data files (see Data Setup below)
 
-| Feature | Random Forest | XGBoost |
-|---------|---------------|---------|
-| bid_ask_spread | 34.14% | 36.09% |
-| is_call | 9.37% | 15.37% |
-| moneyness_T | 7.84% | 8.53% |
-| log_moneyness | 7.48% | 5.40% |
-| historical_vol | 1.73% | 0.79% |
+# 5. Run pipeline
+python main.py
+```
 
-Bid-ask spread dominates, suggesting market microstructure effects are more critical for pricing accuracy than volatility estimation.
+### **Option 2: Using pip + venv**
+```bash
+# 1. Clone repository
+git clone https://github.com/BRigoli25/Projet-data-science.git
+cd Projet-data-science
 
----
+# 2. Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-## ⚡ Computational Performance
+# 3. Install dependencies
+pip install -r requirements.txt
 
-| Model | Training Time | Inference (s) | Options/sec |
-|-------|---------------|---------------|-------------|
-| Black-Scholes | — | 0.027 | 16,142,431 |
-| Neural Network | 113 min | 0.083 | 5,279,921 |
-| XGBoost | 2 min | 0.339 | 1,290,513 |
-| Random Forest | 10 min | 0.712 | 614,730 |
+# 4. Add data files (see Data Setup below)
+
+# 5. Run pipeline
+python main.py
+```
 
 ---
 
-## 📚 References
+## 📊 Data Setup
 
-- Black, F., & Scholes, M. (1973). The pricing of options and corporate liabilities. *Journal of Political Economy*, 81(3), 637-654.
-- Hutchinson, J. M., Lo, A. W., & Poggio, T. (1994). A nonparametric approach to pricing and hedging derivative securities via learning networks. *Journal of Finance*, 49(3), 851-889.
-- Breiman, L. (2001). Random forests. *Machine Learning*, 45(1), 5-32.
-- Chen, T., & Guestrin, C. (2016). XGBoost: A scalable tree boosting system. *Proc. 22nd ACM SIGKDD*, 785-794.
-- Grinsztajn, L., et al. (2022). Why do tree-based models still outperform deep learning on typical tabular data? *NeurIPS*.
+**IMPORTANT:** Due to GitHub size limits and WRDS licensing, data files are not included in this repository.
+
+### **Required Data Files**
+
+Place these files in `data/raw/`:
+
+1. **SPX_Options_raw_2018-2025.csv** (~3.5 GB)
+   - Source: WRDS OptionMetrics
+   - Contains: SPX option quotes (bid/ask/mid, volume, OI, implied vol)
+
+2. **SPX_Forward_Prices_Complete_2018-2025.csv** (~100 MB)
+   - Source: WRDS OptionMetrics
+   - Contains: Forward prices for dividend adjustment
+
+3. **treasury_3month_rates.csv** (optional - auto-downloads if missing)
+   - Source: FRED API
+   - Contains: 3-month Treasury rates (risk-free rate proxy)
+
+### **For Course TAs/Graders**
+
+**If you do not have access to WRDS data:**
+
+Contact me at: bastian.rigoli@unil.ch
+
+I can provide:
+- Sample dataset (1000 options) for testing code functionality
+- Full dataset via secure file transfer
+- Pre-computed results for verification
+
+**Note:** The code will auto-download Treasury rates from FRED if missing.
 
 ---
 
-## 📝 License
+## ⚙️ Usage
 
-This project is for academic purposes (Advanced Programming 2025).
+### **Run Full Pipeline**
+```bash
+python main.py
+```
+
+**Executes:**
+1. Data preprocessing & Black-Scholes baseline (~9 min)
+2. Neural Network training with two-pass method (~113 min)
+3. Random Forest training (~10 min)
+4. XGBoost training (~2 min)
+5. Visualization generation (~1 min)
+
+**Total Runtime:** ~135 minutes on MacBook Pro (M1)
+
+### **Run Individual Components**
+```bash
+# Only preprocessing
+python main.py --preprocess
+
+# Only model training (requires preprocessed data)
+python main.py --models
+
+# Only visualizations (requires results CSVs)
+python main.py --viz
+```
 
 ---
 
-## 🤖 AI Tools Disclosure
+## 📈 Expected Outputs
 
-This project utilized Claude (Anthropic) for code debugging, methodology discussion, and writing assistance. All code implementations, experimental design decisions, and interpretations are the author's own work.
+### **Results Directory (`results/`)**
+
+After running, you'll find:
+
+**CSV Files:**
+- `SPX_with_BS_Historical.csv` - Preprocessed data with BS prices
+- `bs_walk_forward_results.csv` - BS baseline metrics
+- `nn_walk_forward_results.csv` - Neural Network results
+- `rf_walk_forward_results.csv` - Random Forest results
+- `xgb_walk_forward_results.csv` - XGBoost results
+- `rf_feature_importance.csv` - Feature importance rankings
+- `xgb_feature_importance.csv`
+
+**Plots Directory (`results/plots/`):**
+- `mae_comparison.png` - Model performance comparison
+- `feature_importance.png` - Top predictive features
+- `performance_by_year.png` - Temporal analysis
+- Additional diagnostic plots
+
+### **Models Directory (`models/`)**
+
+Saved trained models:
+- `best_NN_Basic_Fold[1-5]_FINAL.pth` - Neural networks (5 folds)
+- `RF_Basic_Fold[1-5].joblib` - Random Forests (5 folds)
+- `XGB_Basic_Fold[1-5].joblib` - XGBoost models (5 folds)
+
+---
+
+## 🔬 Key Results
+
+| Model | Avg Test MAE | vs Black-Scholes |
+|-------|--------------|------------------|
+| **Black-Scholes** | $19.56 | Baseline |
+| **Neural Network** | $12.09 | **-38%** ✅ |
+| **Random Forest** | $12.87 | **-34%** |
+| **XGBoost** | $13.05 | **-33%** |
+
+**Key Finding:** Bid-ask spread (market microstructure) dominates feature importance at 34-36%, while historical volatility contributes only 1-2%. This suggests ML models excel at capturing liquidity effects that theoretical models miss.
+
+---
+
+## 🧪 Testing the Code (For TAs)
+
+### **Quick Functionality Test (Without Full Data)**
+
+If you don't have the full dataset, you can test the code structure:
+```bash
+# Check imports work
+python -c "from src.data_loader import FEATURES_BASIC; print('✅ Imports OK')"
+python -c "from src.models import train_neural_network; print('✅ Models OK')"
+python -c "from src.evaluation import generate_all_plots; print('✅ Evaluation OK')"
+
+# Check CLI
+python main.py --help
+```
+
+### **Full Test (With Data)**
+```bash
+# Run full pipeline
+python main.py
+
+# Expected runtime: ~135 minutes
+# Expected outputs: 15+ CSV files, 10+ plots, 15 model files
+```
+
+---
+
+## 📦 Dependencies
+
+**Core Libraries:**
+- Python 3.10+
+- NumPy, Pandas, SciPy
+- Scikit-learn (Random Forest, preprocessing)
+- XGBoost (gradient boosting)
+- PyTorch (neural networks)
+- Matplotlib, Seaborn (visualizations)
+
+**Data Sources:**
+- WRDS OptionMetrics (option data)
+- FRED API (risk-free rates)
+
+---
+
+## 🐛 Troubleshooting
+
+### **Issue: "ModuleNotFoundError: No module named 'xgboost'"**
+```bash
+pip install xgboost
+```
+
+### **Issue: "FileNotFoundError: data/raw/SPX_Options_raw_2018-2025.csv"**
+
+Data files missing. See **Data Setup** section above.
+
+### **Issue: PyTorch CUDA errors**
+
+The code automatically uses CPU if GPU unavailable. To disable CUDA warnings:
+```python
+# In src/models.py (already handled)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+```
+
+### **Issue: "Treasury rates download failed"**
+
+The code auto-downloads from FRED. If that fails, it uses a fallback rate of 4%. To manually fix:
+```bash
+# Check internet connection or download manually from:
+# https://fred.stlouisfed.org/series/DTB3
+```
+
+---
+
+## 📧 Contact
+
+**Bastian Rigoli**  
+Email: bastian.rigoli@unil.ch  
+GitHub: [BRigoli25](https://github.com/BRigoli25)
+
+---
+
+## 📄 License
+
+This project is submitted as coursework for Advanced Programming 2025 at the University of Lausanne. All rights reserved.
+
+---
+
+## 🙏 Acknowledgments
+
+- **WRDS OptionMetrics** for comprehensive options data
+- **Hutchinson et al. (1994)** for neural network option pricing methodology
+- **Grinsztajn et al. (2022)** for insights on tree-based models vs neural networks on tabular data
+- **Course instructors** for guidance and feedback
