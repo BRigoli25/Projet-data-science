@@ -24,6 +24,3 @@ results/
 .vscode/
 main_test.py
 
-# IDE
-.vscode/
-main_test.py

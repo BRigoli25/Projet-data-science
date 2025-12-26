@@ -45,8 +45,10 @@ project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.config import *
-
+from src.data_loader import (
+    PROJECT_ROOT, DATA_DIR, RESULTS_DIR, MODELS_DIR,
+    FEATURES_BASIC
+)
 
 # ============================================================
 # HELPER FUNCTIONS

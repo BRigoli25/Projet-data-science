@@ -18,14 +18,87 @@ Steps:
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.config import *
 import pandas as pd
 import numpy as np
 from scipy.stats import norm
 from pandas_datareader import data as pdr
 
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
+# Get project root directory
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Main directories
+DATA_DIR = os.path.join(PROJECT_ROOT, 'data', 'raw')
+RESULTS_DIR = os.path.join(PROJECT_ROOT, 'results')
+MODELS_DIR = os.path.join(PROJECT_ROOT, 'models')
+
+# Create directories if they don't exist
+for directory in [DATA_DIR, RESULTS_DIR, MODELS_DIR]:
+    os.makedirs(directory, exist_ok=True)
+
+# Input data files
+SPX_FORWARD_FILE = os.path.join(DATA_DIR, 'SPX_Forward_Prices_Complete_2018-2025.csv')
+SPX_OPTIONS_FILE = os.path.join(DATA_DIR, 'SPX_Options_raw_2018-2025.csv')
+TREASURY_RATES_FILE = os.path.join(DATA_DIR, 'treasury_3month_rates.csv')
+
+# Output files
+SPX_MERGED_FILE = os.path.join(RESULTS_DIR, 'SPX_MERGED_TO_USE.csv')
+SPX_CLEAN_FILE = os.path.join(RESULTS_DIR, 'SPX_Clean_Merged.csv')
+SPX_BS_BOTH_FILE = os.path.join(RESULTS_DIR, 'SPX_with_BS_Both_Vols.csv')
+SPX_BS_HIST_FILE = os.path.join(RESULTS_DIR, 'SPX_with_BS_Historical.csv')
+SPX_FEATURES_FILE = os.path.join(RESULTS_DIR, 'SPX_features.csv')
+
+# Feature sets 
+FEATURES_BASIC = [
+    'moneyness',
+    'log_moneyness',
+    'T',
+    'log_T',
+    'sqrt_T',
+    'is_call',
+    'forward_price_norm',
+    'moneyness_T',
+    'log_moneyness_sqrt_T',
+    'log_volume',
+    'log_open_interest',
+    'bid_ask_spread',
+    'historical_vol',
+    'historical_vol_sqrt_T'
+]
+
+# Treasury rates configuration
+TREASURY_CONFIG = {
+    'symbol': 'DTB3',
+    'source': 'fred',
+    'start_date': '2017-12-01',
+    'end_date': '2025-12-31',
+    'fallback_rate': 0.04,
+}
+
+# Black-Scholes configuration
+BS_CONFIG = {
+    'historical_vol_window': 60,
+    'trading_days_per_year': 252,
+}
+
+FILTER_CONFIG = {
+    'min_moneyness': 0.80,
+    'max_moneyness': 1.20,
+    'min_days_to_expiry': 2,
+    'max_days_to_expiry': 730,
+    'min_volume': 10,
+    'min_open_interest': 100,
+    'min_implied_vol': 0.05,
+    'max_implied_vol': 1.00,
+}
+
+print(f"✅ Configuration loaded")
+print(f"   Project root: {PROJECT_ROOT}")
+print(f"   Data directory: {DATA_DIR}")
+print(f"   Results directory: {RESULTS_DIR}")
 def load_treasury_rates():
     """Load or download risk-free rates from FRED."""
     

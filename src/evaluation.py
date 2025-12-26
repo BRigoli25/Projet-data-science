@@ -33,15 +33,8 @@ plt.rcParams['grid.alpha'] = 0.25
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
-try:
-    from src.config import RESULTS_DIR, PROJECT_ROOT
-    print("✅ Configuration loaded")
-except ImportError:
-    PROJECT_ROOT = project_root
-    RESULTS_DIR = os.path.join(PROJECT_ROOT, 'results')
+from src.data_loader import RESULTS_DIR, PROJECT_ROOT
 
 PLOTS_DIR = os.path.join(RESULTS_DIR, 'plots')
 os.makedirs(PLOTS_DIR, exist_ok=True)

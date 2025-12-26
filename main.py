@@ -15,7 +15,6 @@ Usage:
     python main.py --models     # Run only model training
     python main.py --viz        # Run only visualizations
 """
-
 import os
 import sys
 import time
@@ -27,9 +26,8 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(PROJECT_ROOT, 'src')
 sys.path.insert(0, SRC_DIR)
 
-# Import modules (NEW STRUCTURE)
-from src.config import RESULTS_DIR, MODELS_DIR
-from src.data_loader import run_preprocessing
+# Import from new structure (NO MORE config.py!)
+from src.data_loader import RESULTS_DIR, MODELS_DIR, FEATURES_BASIC, run_preprocessing
 from src.models import train_neural_network, train_random_forest, train_xgboost
 from src.evaluation import generate_all_plots
 
@@ -66,19 +64,25 @@ def run_full_pipeline():
         elapsed = time.time() - step_start
         results["Preprocessing"] = {'success': False, 'time': elapsed}
         print(f"\n❌ Preprocessing failed: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Load data for model training
+    try:
+        import pandas as pd
+        df = pd.read_csv(os.path.join(RESULTS_DIR, 'SPX_with_BS_Historical.csv'), low_memory=False)
+        df['date'] = pd.to_datetime(df['date'])
+        df_clean = df.dropna(subset=FEATURES_BASIC + ['mid_price'])
+        print(f"\n✅ Data loaded: {len(df_clean):,} options")
+    except Exception as e:
+        print(f"\n❌ Failed to load data: {e}")
+        return
     
     # Step 2: Neural Network
     print_header("STEP 2: NEURAL NETWORK TRAINING")
     step_start = time.time()
     try:
-        import pandas as pd
-        df = pd.read_csv(os.path.join(RESULTS_DIR, 'SPX_with_BS_Historical.csv'), low_memory=False)
-        df['date'] = pd.to_datetime(df['date'])
-        df_clean = df.dropna(subset=['moneyness', 'T', 'mid_price'])
-        
-        from src.config import FEATURES_BASIC
         train_neural_network(df_clean, FEATURES_BASIC)
-        
         elapsed = time.time() - step_start
         results["Neural Network"] = {'success': True, 'time': elapsed}
         print(f"\n✅ Neural Network completed in {elapsed:.1f}s")
@@ -86,6 +90,8 @@ def run_full_pipeline():
         elapsed = time.time() - step_start
         results["Neural Network"] = {'success': False, 'time': elapsed}
         print(f"\n❌ Neural Network failed: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Step 3: Random Forest
     print_header("STEP 3: RANDOM FOREST TRAINING")
@@ -99,6 +105,8 @@ def run_full_pipeline():
         elapsed = time.time() - step_start
         results["Random Forest"] = {'success': False, 'time': elapsed}
         print(f"\n❌ Random Forest failed: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Step 4: XGBoost
     print_header("STEP 4: XGBOOST TRAINING")
@@ -112,6 +120,8 @@ def run_full_pipeline():
         elapsed = time.time() - step_start
         results["XGBoost"] = {'success': False, 'time': elapsed}
         print(f"\n❌ XGBoost failed: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Step 5: Visualizations
     print_header("STEP 5: GENERATING VISUALIZATIONS")
@@ -125,6 +135,8 @@ def run_full_pipeline():
         elapsed = time.time() - step_start
         results["Visualizations"] = {'success': False, 'time': elapsed}
         print(f"\n❌ Visualizations failed: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Final summary
     total_time = time.time() - total_start
@@ -161,10 +173,9 @@ def main():
         run_preprocessing()
     elif args.models:
         import pandas as pd
-        from src.config import FEATURES_BASIC
         df = pd.read_csv(os.path.join(RESULTS_DIR, 'SPX_with_BS_Historical.csv'), low_memory=False)
         df['date'] = pd.to_datetime(df['date'])
-        df_clean = df.dropna()
+        df_clean = df.dropna(subset=FEATURES_BASIC + ['mid_price'])
         
         train_neural_network(df_clean, FEATURES_BASIC)
         train_random_forest(df_clean, FEATURES_BASIC)
