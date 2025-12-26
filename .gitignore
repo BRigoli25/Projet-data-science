@@ -28,3 +28,5 @@ main_test.py
 .vscode/
 main_test.py
 main_old.py
+main_old.py
+*_old.py
