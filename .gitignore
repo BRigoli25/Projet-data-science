@@ -19,3 +19,11 @@ venv/
 .DS_Store
 models/
 results/
+
+# IDE
+.vscode/
+main_test.py
+
+# IDE
+.vscode/
+main_test.py
