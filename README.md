@@ -33,46 +33,73 @@ option-pricing-project/
 
 ---
 
-## 🚀 Quick Start
+# Machine Learning for SPX Option Pricing
 
-### **Option 1: Using Conda (Recommended)**
+## 🚀 Quick Start - TWO OPTIONS
+
+### **Option 1: Demo Mode (< 30 minutes) ⚡ RECOMMENDED FOR TAs**
+
+Quick verification with pre-computed results:
 ```bash
-# 1. Clone repository
+# 1. Setup
 git clone https://github.com/BRigoli25/Projet-data-science.git
 cd Projet-data-science
-
-# 2. Create environment
-conda env create -f environment.yml
-
-# 3. Activate environment
+bash setup.sh
 conda activate fin_project
 
-# 4. Add data files (see Data Setup below)
+# 2. Get pre-computed files (~600 MB)
+# Download from: [LINK] (contact bastian.rigoli@unil.ch)
+# Extract to project root
 
-# 5. Run pipeline
-python main.py
+# 3. Run demo
+python demo.py
 ```
 
-### **Option 2: Using pip + venv**
+**What you get:**
+- ✅ All results verified in < 2 minutes
+- ✅ Load preprocessed data (5 sec instead of 9 min)
+- ✅ Load pre-trained models (instant instead of 2+ hours)
+- ✅ Generate visualizations (30 sec)
+
+
+### **Option 2: Full Pipeline (148 minutes)**
+
+Train everything from scratch:
 ```bash
-# 1. Clone repository
+# 1. Setup (same as above)
 git clone https://github.com/BRigoli25/Projet-data-science.git
 cd Projet-data-science
+bash setup.sh
+conda activate fin_project
 
-# 2. Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# 2. Get raw data (~3.5 GB)
+# Contact: bastian.rigoli@unil.ch
+# Place in: data/raw/
 
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Add data files (see Data Setup below)
-
-# 5. Run pipeline
+# 3. Run full pipeline
 python main.py
 ```
 
+**What happens:**
+- Preprocessing: 9 minutes
+- Neural Network training: 128 minutes
+- Random Forest: 10 minutes
+- XGBoost: 25 seconds
+- Visualizations: 1 minute
+
+**Perfect for:** Reproducing results, verifying training, research
+
 ---
+
+## 📊 Results (Either Option)
+
+| Model | MAE | vs Black-Scholes |
+|-------|-----|------------------|
+| Black-Scholes | $19.56 | Baseline |
+| Neural Network | $12.19 | **+37.6%** ✅ |
+| Random Forest | $12.87 | **+34.2%** |
+| XGBoost | $12.42 | **+36.5%** |
+
 
 ## 📊 Data Setup
 
