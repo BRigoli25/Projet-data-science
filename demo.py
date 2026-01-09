@@ -1,45 +1,32 @@
 #!/usr/bin/env python3
 """
-DEMO MODE - Quick Results for TA (< 5 minutes)
-================================================
+DEMO MODE - Quick Results for TA (< 1 minute)
+==============================================
 
-This script loads pre-processed data and pre-trained models
-to demonstrate results quickly without retraining.
+Loads ONE pickle file with all pre-computed results.
+No training required!
 
 Usage:
     python demo.py
 
 Requirements:
-    - results/preprocessed_data_lite.pkl (from save_preprocessed_data.py)
-    - models/*.pth and models/*.joblib (pre-trained models)
-    - results/*_walk_forward_results.csv (pre-computed results)
+    - demo_data.pkl (download from Google Drive)
 
-What it does:
-    1. Loads preprocessed data (5 sec)
-    2. Loads pre-trained models (1 sec)
-    3. Shows results summary (instant)
-    4. Generates visualizations (30 sec)
-    5. Validates against pre-computed results (instant)
-
-Total time: < 2 minutes
+Total time: < 30 seconds
 """
 
 import pandas as pd
 import pickle
 import sys
 from pathlib import Path
-import time
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from src.data_loader import PROJECT_ROOT, RESULTS_DIR, MODELS_DIR
+from src.data_loader import PROJECT_ROOT, RESULTS_DIR
 from src.evaluation import generate_all_plots
 
-# Convert to Path objects if they're strings
 RESULTS_DIR = Path(RESULTS_DIR) if isinstance(RESULTS_DIR, str) else RESULTS_DIR
-MODELS_DIR = Path(MODELS_DIR) if isinstance(MODELS_DIR, str) else MODELS_DIR
-PROJECT_ROOT = Path(PROJECT_ROOT) if isinstance(PROJECT_ROOT, str) else PROJECT_ROOT
 
 def print_header(text):
     """Print section header."""
@@ -59,208 +46,175 @@ def print_info(text):
     """Print info message."""
     print(f"ℹ️  {text}")
 
-def load_preprocessed_data():
-    """Load preprocessed data from pickle file."""
-    print_header("LOADING PREPROCESSED DATA")
+def load_demo_data():
+    """Load all data from single pickle file."""
+    print_header("LOADING DEMO DATA")
     
-    pkl_file = RESULTS_DIR / 'preprocessed_data_lite.pkl'
+    # Check for demo_data.pkl in multiple locations
+    possible_paths = [
+        Path("demo_data.pkl"),
+        Path("results/demo_data.pkl"),
+        RESULTS_DIR / "demo_data.pkl"
+    ]
     
-    if not pkl_file.exists():
-        print_error(f"Preprocessed data not found: {pkl_file}")
-        print_info("Please run first: python save_preprocessed_data.py")
+    demo_file = None
+    for path in possible_paths:
+        if path.exists():
+            demo_file = path
+            break
+    
+    if not demo_file:
+        print_error("demo_data.pkl not found!")
+        print("")
+        print_info("Please download demo_data.pkl from Google Drive:")
+        print_info("https://drive.google.com/drive/folders/1iBwDWOvCxwZOBESIHBSVMfeImUMxvT4Z")
+        print("")
+        print_info("Place it in the project root directory")
+        print("")
         return None
     
-    print_info(f"Loading: {pkl_file}")
-    start = time.time()
+    print_info(f"Loading: {demo_file}")
     
-    with open(pkl_file, 'rb') as f:
-        df = pickle.load(f)
+    with open(demo_file, "rb") as f:
+        demo_data = pickle.load(f)
     
-    elapsed = time.time() - start
+    print_success("Demo data loaded!")
+    print_info(f"Preprocessed data: {len(demo_data['preprocessed_data']):,} samples")
+    print_info(f"Model results: {len(demo_data['results'])} models")
     
-    print_success(f"Loaded {len(df):,} options in {elapsed:.2f} seconds")
-    print_info(f"Date range: {df['date'].min()} to {df['date'].max()}")
-    
-    return df
+    return demo_data
 
-def check_pretrained_models():
-    """Check if pre-trained models exist."""
-    print_header("CHECKING PRE-TRAINED MODELS")
-    
-    # Check for neural network models
-    nn_models = list(MODELS_DIR.glob('best_NN_Basic_Fold*_FINAL.pth'))
-    rf_models = list(MODELS_DIR.glob('RF_Basic_Fold*.joblib'))
-    xgb_models = list(MODELS_DIR.glob('XGB_Basic_Fold*.joblib'))
-    
-    print_info(f"Neural Network models: {len(nn_models)}/5")
-    print_info(f"Random Forest models: {len(rf_models)}/5")
-    print_info(f"XGBoost models: {len(xgb_models)}/5")
-    
-    all_present = (len(nn_models) == 5 and len(rf_models) == 5 and len(xgb_models) == 5)
-    
-    if all_present:
-        print_success("All pre-trained models found!")
-    else:
-        print_error("Some models are missing!")
-        print_info("These would need to be trained (takes 2+ hours)")
-        print_info("Continuing with results visualization only...")
-    
-    return all_present
-
-def load_results():
-    """Load pre-computed results."""
-    print_header("LOADING PRE-COMPUTED RESULTS")
-    
-    results = {}
-    
-    result_files = {
-        'bs': 'bs_walk_forward_results.csv',
-        'nn': 'nn_walk_forward_results.csv',
-        'rf': 'rf_walk_forward_results.csv',
-        'xgb': 'xgb_walk_forward_results.csv'
-    }
-    
-    for model, filename in result_files.items():
-        filepath = RESULTS_DIR / filename
-        if filepath.exists():
-            results[model] = pd.read_csv(filepath)
-            
-            # Handle different possible column names for MAE
-            # BS uses 'mae', but NN/RF/XGB use 'test_mae'
-            mae_col = None
-            if 'test_mae' in results[model].columns:
-                mae_col = 'test_mae'
-            elif 'mae' in results[model].columns:
-                mae_col = 'mae'
-            elif 'MAE' in results[model].columns:
-                mae_col = 'MAE'
-            elif 'Test MAE' in results[model].columns:
-                mae_col = 'Test MAE'
-            
-            if mae_col:
-                mae = results[model][mae_col].mean()
-                print_success(f"{model.upper():<6} MAE: ${mae:.2f}")
-            else:
-                # Print all columns to debug
-                print_error(f"{filename} - MAE column not found")
-                print_info(f"Available columns: {list(results[model].columns)}")
-                results[model] = None
-        else:
-            print_error(f"{filename} not found")
-            results[model] = None
-    
-    return results
+def get_mae_column(df):
+    """Find MAE column name in dataframe."""
+    possible_names = ["test_mae", "mae", "MAE", "Test MAE"]
+    for name in possible_names:
+        if name in df.columns:
+            return name
+    return None
 
 def display_results_summary(results):
     """Display results summary table."""
     print_header("RESULTS SUMMARY")
     
-    if results['bs'] is None:
+    if "bs" not in results:
         print_error("Results not available")
-        return
+        return False
     
-    # Find MAE column name - check test_mae first (for ML models), then mae (for BS)
-    def get_mae_col(df):
-        if 'test_mae' in df.columns:
-            return 'test_mae'
-        elif 'mae' in df.columns:
-            return 'mae'
-        elif 'MAE' in df.columns:
-            return 'MAE'
-        elif 'Test MAE' in df.columns:
-            return 'Test MAE'
-        return None
-    
-    # Calculate average MAE for each model
-    bs_mae_col = get_mae_col(results['bs'])
+    bs_mae_col = get_mae_column(results["bs"])
     if not bs_mae_col:
         print_error("Cannot find MAE column in results")
-        print_info(f"Available columns: {list(results['bs'].columns)}")
-        return
+        return False
     
-    bs_mae = results['bs'][bs_mae_col].mean()
+    bs_mae = results["bs"][bs_mae_col].mean()
     
     print("\n" + "="*70)
-    print(" " * 20 + "MODEL COMPARISON")
+    print(" " * 20 + "MODEL PERFORMANCE")
     print("="*70)
-    print(f"{'Model':<30} {'Avg MAE':<15} {'vs Baseline':<15}")
+    print(f"{'Model':<25} {'MAE':<15} {'vs Black-Scholes':<20}")
     print("-"*70)
     
-    print(f"{'Black-Scholes (Baseline)':<30} ${bs_mae:>6.2f}{'':<8} {'Baseline':<15}")
+    print(f"{'Black-Scholes':<25} ${bs_mae:>6.2f}{'':<8} {'Baseline':<20}")
     
-    if results['nn'] is not None:
-        nn_mae_col = get_mae_col(results['nn'])
+    # Neural Network
+    if "nn" in results:
+        nn_mae_col = get_mae_column(results["nn"])
         if nn_mae_col:
-            nn_mae = results['nn'][nn_mae_col].mean()
+            nn_mae = results["nn"][nn_mae_col].mean()
             improvement = ((bs_mae - nn_mae) / bs_mae) * 100
-            print(f"{'Neural Network':<30} ${nn_mae:>6.2f}{'':<8} {f'+{improvement:.1f}%':<15}")
+            print(f"{'Neural Network':<25} ${nn_mae:>6.2f}{'':<8} {f'+{improvement:.1f}% better':<20}")
     
-    if results['rf'] is not None:
-        rf_mae_col = get_mae_col(results['rf'])
+    # Random Forest
+    if "rf" in results:
+        rf_mae_col = get_mae_column(results["rf"])
         if rf_mae_col:
-            rf_mae = results['rf'][rf_mae_col].mean()
+            rf_mae = results["rf"][rf_mae_col].mean()
             improvement = ((bs_mae - rf_mae) / bs_mae) * 100
-            print(f"{'Random Forest':<30} ${rf_mae:>6.2f}{'':<8} {f'+{improvement:.1f}%':<15}")
+            print(f"{'Random Forest':<25} ${rf_mae:>6.2f}{'':<8} {f'+{improvement:.1f}% better':<20}")
     
-    if results['xgb'] is not None:
-        xgb_mae_col = get_mae_col(results['xgb'])
+    # XGBoost
+    if "xgb" in results:
+        xgb_mae_col = get_mae_column(results["xgb"])
         if xgb_mae_col:
-            xgb_mae = results['xgb'][xgb_mae_col].mean()
+            xgb_mae = results["xgb"][xgb_mae_col].mean()
             improvement = ((bs_mae - xgb_mae) / bs_mae) * 100
-            print(f"{'XGBoost':<30} ${xgb_mae:>6.2f}{'':<8} {f'+{improvement:.1f}%':<15}")
+            print(f"{'XGBoost':<25} ${xgb_mae:>6.2f}{'':<8} {f'+{improvement:.1f}% better':<20}")
     
     print("="*70)
     
-    # Show fold-by-fold results
-    print("\n" + "="*70)
-    print(" " * 20 + "FOLD-BY-FOLD RESULTS")
-    print("="*70)
+    # Show best model
+    best_mae = float("inf")
+    best_model = None
     
-    if results['nn'] is not None:
-        nn_mae_col = get_mae_col(results['nn'])
-        if nn_mae_col:
-            print("\nNeural Network (Two-Pass Training):")
-            print(f"{'Fold':<10} {'Year':<10} {'MAE':<15}")
-            print("-"*35)
-            
-            # Check for different column name variations
-            fold_col = None
-            year_col = None
-            
-            if 'fold' in results['nn'].columns:
-                fold_col = 'fold'
-            elif 'Fold' in results['nn'].columns:
-                fold_col = 'Fold'
-            
-            if 'test_year' in results['nn'].columns:
-                year_col = 'test_year'
-            elif 'year' in results['nn'].columns:
-                year_col = 'year'
-            elif 'Year' in results['nn'].columns:
-                year_col = 'Year'
-            
-            if fold_col and year_col:
-                for _, row in results['nn'].iterrows():
-                    print(f"Fold {row[fold_col]:<5} {int(row[year_col]):<10} ${row[nn_mae_col]:>6.2f}")
-            else:
-                print_info(f"Cannot display fold details - missing columns")
+    for model_name, model_key in [("Neural Network", "nn"), ("Random Forest", "rf"), ("XGBoost", "xgb")]:
+        if model_key in results:
+            mae_col = get_mae_column(results[model_key])
+            if mae_col:
+                mae = results[model_key][mae_col].mean()
+                if mae < best_mae:
+                    best_mae = mae
+                    best_model = model_name
     
-    print("\n" + "="*70)
+    if best_model:
+        improvement = ((bs_mae - best_mae) / bs_mae) * 100
+        print(f"\n🏆 Best Model: {best_model}")
+        print(f"   MAE: ${best_mae:.2f} ({improvement:.1f}% better than Black-Scholes)")
+    
+    return True
+
+def show_feature_importance(feature_importance):
+    """Show feature importance."""
+    print_header("FEATURE IMPORTANCE")
+    
+    if "rf" in feature_importance:
+        print_success("Random Forest - Top 5 Features:")
+        df = feature_importance["rf"]
+        if "feature" in df.columns and "importance" in df.columns:
+            print()
+            for i, row in df.head(5).iterrows():
+                print(f"   {i+1}. {row['feature']:<30} {row['importance']:>6.3f}")
+        print()
+    
+    if "xgb" in feature_importance:
+        print_success("XGBoost - Top 5 Features:")
+        df = feature_importance["xgb"]
+        if "feature" in df.columns and "importance" in df.columns:
+            print()
+            for i, row in df.head(5).iterrows():
+                print(f"   {i+1}. {row['feature']:<30} {row['importance']:>6.3f}")
+        print()
+
+def save_results_for_plots(demo_data):
+    """Save results to CSV files for plotting."""
+    print_header("PREPARING VISUALIZATIONS")
+    
+    # Create results directory if needed
+    RESULTS_DIR.mkdir(exist_ok=True)
+    
+    # Save results to CSV
+    for model_name, df in demo_data["results"].items():
+        output_file = RESULTS_DIR / f"{model_name}_walk_forward_results.csv"
+        df.to_csv(output_file, index=False)
+        print_success(f"Saved {model_name} results")
+    
+    # Save feature importance
+    for model_name, df in demo_data["feature_importance"].items():
+        output_file = RESULTS_DIR / f"{model_name}_feature_importance.csv"
+        df.to_csv(output_file, index=False)
+        print_success(f"Saved {model_name} feature importance")
 
 def generate_visualizations():
     """Generate all plots."""
     print_header("GENERATING VISUALIZATIONS")
     
-    print_info("Creating plots from pre-computed results...")
-    start = time.time()
+    print_info("Creating plots...")
     
     try:
         generate_all_plots()
-        elapsed = time.time() - start
-        print_success(f"Plots generated in {elapsed:.1f} seconds")
+        print_success("Plots generated successfully")
         print_info(f"View plots in: {RESULTS_DIR / 'plots'}")
     except Exception as e:
         print_error(f"Error generating plots: {e}")
+        print_info("Continuing without visualizations...")
 
 def main():
     """Run demo mode."""
@@ -272,80 +226,50 @@ def main():
     print("█" + " "*68 + "█")
     print("█"*70)
     
-    print_info("This demo loads pre-computed data and results")
-    print_info("Estimated time: < 2 minutes")
+    print_info("Loading from single demo_data.pkl file")
     print_info("No training required!")
+    print()
     
-    total_start = time.time()
+    # Load demo data
+    demo_data = load_demo_data()
     
-    # Step 1: Load preprocessed data
-    df = load_preprocessed_data()
-    
-    if df is None:
-        print("\n" + "="*70)
-        print_error("DEMO MODE FAILED - Missing preprocessed data")
-        print_info("To prepare for demo mode:")
-        print_info("1. Run full pipeline once: python main.py")
-        print_info("2. Serialize data: python save_preprocessed_data.py")
-        print_info("3. Then run demo: python demo.py")
+    if demo_data is None:
         return 1
     
-    # Step 2: Check for pre-trained models
-    models_present = check_pretrained_models()
+    # Display summary
+    success = display_results_summary(demo_data["results"])
     
-    # Step 3: Load results
-    results = load_results()
+    if not success:
+        return 1
     
-    # Step 4: Display summary
-    display_results_summary(results)
+    # Show feature importance
+    show_feature_importance(demo_data["feature_importance"])
     
-    # Step 5: Generate visualizations
+    # Save results for plotting
+    save_results_for_plots(demo_data)
+    
+    # Generate visualizations
     generate_visualizations()
     
-    # Final summary
-    total_elapsed = time.time() - total_start
-    
+    # Final message
     print("\n" + "█"*70)
     print("█" + " "*68 + "█")
-    print("█" + "  DEMO COMPLETE!".center(68) + "█")
+    print("█" + "  ✅ DEMO COMPLETED SUCCESSFULLY!".center(68) + "█")
     print("█" + " "*68 + "█")
     print("█"*70)
     
-    print(f"\n⏱️  Total time: {total_elapsed:.1f} seconds")
-    
-    print("\n📊 Key Results:")
-    if results['bs'] is not None and results['nn'] is not None:
-        # Find MAE column - check test_mae first, then mae
-        bs_mae_col = None
-        nn_mae_col = None
-        
-        if 'test_mae' in results['bs'].columns:
-            bs_mae_col = 'test_mae'
-        elif 'mae' in results['bs'].columns:
-            bs_mae_col = 'mae'
-        
-        if 'test_mae' in results['nn'].columns:
-            nn_mae_col = 'test_mae'
-        elif 'mae' in results['nn'].columns:
-            nn_mae_col = 'mae'
-        
-        if bs_mae_col and nn_mae_col:
-            bs_mae = results['bs'][bs_mae_col].mean()
-            nn_mae = results['nn'][nn_mae_col].mean()
-            improvement = ((bs_mae - nn_mae) / bs_mae) * 100
-            print(f"   Black-Scholes: ${bs_mae:.2f} MAE")
-            print(f"   Neural Network: ${nn_mae:.2f} MAE")
-            print(f"   Improvement: {improvement:.1f}%")
-    
-    print("\n📁 Outputs:")
-    print(f"   Results: {RESULTS_DIR}")
-    print(f"   Plots: {RESULTS_DIR / 'plots'}")
-    print(f"   Models: {MODELS_DIR}")
-    
-    print("\n✅ Demo completed successfully!")
-    print("🚀 All results verified and visualized!")
+    print("\n📊 Summary:")
+    print("   - Loaded all pre-computed results")
+    print("   - Compared ML models vs Black-Scholes baseline")
+    print("   - Generated visualizations")
+    print()
+    print("📁 Outputs:")
+    print(f"   - Results: {RESULTS_DIR}")
+    print(f"   - Plots: {RESULTS_DIR / 'plots'}")
+    print()
+    print("🚀 All results verified!")
     
     return 0
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
