@@ -35,57 +35,218 @@ Projet-data-science/
 
 ---
 
-## 🚀 Quick Demo (< 3 minutes)
+## 🚀 Option 1: Quick Demo (< 3 minutes)
 
-### 1. Clone Repository
+Evaluate pre-trained models and view results without training.
+
+### **1. Clone Repository**
 ```bash
 git clone https://github.com/BRigoli25/Projet-data-science.git
 cd Projet-data-science
 ```
 
-### 2. Download Demo File
-Google Drive: https://drive.google.com/drive/folders/1iBwDWOvCxwZOBESIHBSVMfeImUMxvT4Z
+### **2. Download Demo File**
 
-Download **demo_data.pkl** (630MB) and place in project root.
+**Google Drive:** https://drive.google.com/drive/folders/1iBwDWOvCxwZOBESIHBSVMfeImUMxvT4Z
 
-### 3. Setup & Run
+Download: **demo_data.pkl** (630MB)
+
+**Place it in the project root directory:**
+```bash
+Projet-data-science/
+├── demo.py
+├── demo_data.pkl        ← Place here (same level as demo.py)
+└── ...
+```
+
+### **3. Setup Environment**
 ```bash
 conda env create -f environment.yml
 conda activate fin_project
+```
+
+### **4. Run Demo**
+```bash
 python demo.py
+```
+
+### **Expected Output:**
+```
+══════════════════════════════════════════════════════════════════════
+                        MODEL PERFORMANCE
+══════════════════════════════════════════════════════════════════════
+Model                     MAE             vs Black-Scholes
+──────────────────────────────────────────────────────────────────────
+Black-Scholes             $19.56          Baseline
+Neural Network            $11.81          +39.6% better ✅
+Random Forest             $12.87          +34.2% better
+XGBoost                   $12.42          +36.5% better
+
+🏆 Best Model: Neural Network (39.6% improvement)
 ```
 
 ---
 
-## 🔬 Full Pipeline (for training from scratch)
+## 🔬 Option 2: Full Pipeline (2+ hours)
 
-### Download Raw Data
-From same Google Drive, download with EXACT names:
-- **SPX_Options_raw_2018-2025.csv**
-- **SPX_Forward_Prices_Complete_2018-2025.csv**
-- **treasury_3month_rates.csv**
+Train models from scratch using raw data.
 
-Place in `data/raw/`:
+### **1. Clone Repository**
 ```bash
+git clone https://github.com/BRigoli25/Projet-data-science.git
+cd Projet-data-science
+```
+
+### **2. Download Raw Data**
+
+**Google Drive:** https://drive.google.com/drive/folders/1iBwDWOvCxwZOBESIHBSVMfeImUMxvT4Z
+
+Download these 3 files with EXACT names:
+- **SPX_Options_raw_2018-2025.csv** (~3.5 GB)
+- **SPX_Forward_Prices_Complete_2018-2025.csv** (~100 MB)
+- **treasury_3month_rates.csv** (~50 KB)
+
+**Place them in `data/raw/`:**
+```bash
+# Create directory
 mkdir -p data/raw
+
+# Move downloaded files (use EXACT names!)
 mv ~/Downloads/SPX_Options_raw_2018-2025.csv data/raw/
 mv ~/Downloads/SPX_Forward_Prices_Complete_2018-2025.csv data/raw/
 mv ~/Downloads/treasury_3month_rates.csv data/raw/
+
+# Verify structure
+ls data/raw/
 ```
 
-Then run:
+**Expected output:**
+```
+SPX_Forward_Prices_Complete_2018-2025.csv
+SPX_Options_raw_2018-2025.csv
+treasury_3month_rates.csv
+```
+
+Final structure:
+```
+Projet-data-science/
+├── data/
+│   └── raw/
+│       ├── SPX_Options_raw_2018-2025.csv              ← Exact name required
+│       ├── SPX_Forward_Prices_Complete_2018-2025.csv  ← Exact name required
+│       └── treasury_3month_rates.csv                  ← Exact name required
+└── ...
+```
+
+### **3. Setup Environment**
+```bash
+conda env create -f environment.yml
+conda activate fin_project
+```
+
+### **4. Run Full Pipeline**
 ```bash
 python main.py
 ```
+
+**Pipeline stages:**
+1. Data preprocessing & BS baseline (~9 min)
+2. Neural Network training (~2 hours)
+3. Random Forest training (~10 min)
+4. XGBoost training (~1 min)
+5. Visualization generation (~1 min)
+
+**Total:** ~2-3 hours
+
+---
+
+## 📊 Results Summary
+
+| Model | MAE | Improvement |
+|-------|-----|-------------|
+| Black-Scholes | $19.56 | Baseline |
+| **Neural Network** | **$11.81** | **+39.6%** |
+| Random Forest | $12.87 | +34.2% |
+| XGBoost | $12.42 | +36.5% |
+
+**Dataset:** 3.96M S&P 500 options (2018-2025) from WRDS OptionMetrics
+
+**Key Finding:** Bid-ask spread is the most important feature (23.4%), while historical volatility contributes 18.7%. ML models capture market microstructure effects that Black-Scholes ignores.
+
+---
+
+## 🎯 Key Features
+
+- **Two-pass training methodology** ensures fair model comparison
+- **Walk-forward validation** with 5 temporal folds prevents data leakage
+- **Historical volatility baseline** avoids circularity with implied volatility
+- **Market microstructure features** capture liquidity effects
+
+**Models Implemented:**
+- Neural Network (3 hidden layers, batch normalization, dropout)
+- Random Forest (200 trees, optimized hyperparameters)
+- XGBoost (gradient boosting with L2 regularization)
+- Black-Scholes (historical volatility baseline)
+
+---
+
+## 💻 System Requirements
+
+- **OS:** macOS, Linux, or Windows
+- **Python:** 3.10+
+- **RAM:** 8GB minimum (16GB recommended)
+- **Storage:** 
+  - Demo: 2 GB
+  - Full pipeline: 15 GB
+- **Dependencies:** PyTorch, XGBoost, scikit-learn, pandas, numpy
 
 ---
 
 ## 🐛 Troubleshooting
 
-**FileNotFoundError for data files:**
-Ensure exact filenames:
-- ✅ `SPX_Options_raw_2018-2025.csv` (not `SPX_Options_raw.csv`)
-- ✅ `SPX_Forward_Prices_Complete_2018-2025.csv` (not `SPX_Forward_Prices.csv`)
+### Demo Issues
+
+**"demo_data.pkl not found"**
+- Ensure file is in project root (same level as demo.py)
+- Check: `ls demo_data.pkl`
+
+**"ModuleNotFoundError"**
+```bash
+conda activate fin_project
+pip install -r requirements.txt
+```
+
+### Full Pipeline Issues
+
+**"FileNotFoundError: data/raw/SPX_Options_raw_2018-2025.csv"**
+- Ensure file names are EXACTLY as specified (including dates)
+- Check: `ls data/raw/`
+- Expected files:
+  - `SPX_Options_raw_2018-2025.csv`
+  - `SPX_Forward_Prices_Complete_2018-2025.csv`
+  - `treasury_3month_rates.csv`
+
+**File naming errors:**
+```bash
+# ❌ WRONG (will fail):
+SPX_Options_raw.csv
+SPX_Forward_Prices.csv
+
+# ✅ CORRECT:
+SPX_Options_raw_2018-2025.csv
+SPX_Forward_Prices_Complete_2018-2025.csv
+```
+
+**Out of memory**
+- Close other applications
+- Reduce batch size in `src/models.py` if needed
+
+**Conda environment fails**
+```bash
+conda create -n fin_project python=3.10 -y
+conda activate fin_project
+pip install -r requirements.txt
+```
 
 ---
 
@@ -93,5 +254,25 @@ Ensure exact filenames:
 
 **Bastian Rigoli**  
 Email: bastian.rigoli@unil.ch  
-GitHub: https://github.com/BRigoli25/Projet-data-science  
-Google Drive: https://drive.google.com/drive/folders/1iBwDWOvCxwZOBESIHBSVMfeImUMxvT4Z
+GitHub: [BRigoli25](https://github.com/BRigoli25)
+
+**Google Drive (Data Files):**  
+https://drive.google.com/drive/folders/1iBwDWOvCxwZOBESIHBSVMfeImUMxvT4Z
+
+---
+
+## 📚 References
+
+**Methodology:**
+- Hutchinson et al. (1994) - Neural network option pricing
+- Grinsztajn et al. (2022) - Tree-based models vs neural networks on tabular data
+
+**Data Sources:**
+- WRDS OptionMetrics - S&P 500 Index Options
+- FRED - 3-month Treasury rates
+
+---
+
+## 📄 License
+
+This project is submitted as coursework for Advanced Programming 2025 at the University of Lausanne. All rights reserved.
